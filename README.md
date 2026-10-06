@@ -6,7 +6,7 @@ A private savings goal tracker in a single HTML file. Set a goal, bring in your 
 
 ## Use it
 
-1. Download `goal-tracker.html` and save it somewhere permanent.
+1. Open the live app at https://immohit6.github.io/goal-tracker/ or download `index.html` and save it somewhere permanent.
 2. Open it in Chrome, Safari or Firefox.
 3. Choose a passcode (8 or more characters). There is no recovery, so keep it safe.
 
