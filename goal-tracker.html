@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Goal Tracker</title>
+<style>
+:root{
+  --paper:#f3f5f8;--surface:#ffffff;--ink:#0f1b2d;--mute:#5b6778;--line:#dfe4ea;
+  --cobalt:#2446d8;--on-cobalt:#ffffff;--mint:#0f9d6e;--coral:#d6453d;--amber:#b87b0a;
+  --hero:#0f1b2d;--hero-ink:#f3f6fb;--hero-mute:#9db0c8;--hero-line:rgba(255,255,255,.14);
+  --dock:rgba(255,255,255,.9);--shadow:0 12px 32px rgba(15,27,45,.14);
+  --sans:"SF Pro Display","Inter","Segoe UI Variable Display","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#0b1118;--surface:#121a25;--ink:#e8edf4;--mute:#93a1b4;--line:#223044;
+  --cobalt:#7a93ff;--on-cobalt:#0b1118;--mint:#3dd6a0;--coral:#ff7b70;--amber:#e0a93a;
+  --hero:#17243b;--hero-ink:#f3f6fb;--hero-mute:#9db0c8;--hero-line:rgba(255,255,255,.14);
+  --dock:rgba(18,26,37,.9);--shadow:0 12px 32px rgba(0,0,0,.5);
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--sans);font-feature-settings:"tnum" 1,"cv11" 1;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
+.wrap{max-width:760px;margin:0 auto;padding:18px 18px 130px}
+h1,h2,h3{margin:0;letter-spacing:-.02em}
+h2{font-size:19px;font-weight:650}
+p{margin:0}
+.mute{color:var(--mute)}.small{font-size:13px}
+.mint{color:var(--mint)}.coral{color:var(--coral)}.amber{color:var(--amber)}
+
+/* header */
+.bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.brand{display:flex;align-items:center;gap:11px}
+.mark{width:38px;height:38px;border-radius:11px;background:var(--ink);color:var(--paper);display:grid;place-items:center}
+.brand b{display:block;font-size:17px;letter-spacing:-.02em;line-height:1.15}
+.brand span{font-size:12.5px;color:var(--mute)}
+.ghost{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:transparent;border-radius:999px;padding:8px 14px}
+.ghost:hover{background:var(--surface)}
+
+/* dock */
+.dock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:2px;padding:6px;border-radius:22px;background:var(--dock);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:var(--shadow);border:1px solid var(--line);z-index:5;max-width:calc(100vw - 20px)}
+.dock button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:62px;padding:8px 10px;border:0;background:transparent;border-radius:16px;color:var(--mute);font-size:11.5px;font-weight:550}
+.dock button.on{background:var(--ink);color:var(--paper)}
+.dock .badge{position:absolute;top:3px;right:9px;background:var(--coral);color:#fff;border-radius:9px;min-width:17px;height:17px;padding:0 5px;font-size:10.5px;line-height:17px;font-weight:700}
+
+/* hero */
+.hero{background:var(--hero);color:var(--hero-ink);border-radius:26px;padding:26px 24px 22px;margin-bottom:26px}
+.hero .name{color:var(--hero-mute);font-size:14px;font-weight:550}
+.figrow{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:6px 0 30px}
+.fig{font-size:clamp(46px,13vw,72px);font-weight:300;letter-spacing:-.035em;line-height:1}
+.of{color:var(--hero-mute);font-size:16px}
+.ruler{position:relative;height:16px;background:var(--hero-line);border-radius:8px}
+.rfill{position:absolute;left:0;top:0;bottom:0;border-radius:8px;background:var(--mint);transition:width 1.1s cubic-bezier(.2,.8,.2,1)}
+.tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.22)}
+.sched{position:absolute;top:-8px;bottom:-8px;width:3px;margin-left:-1.5px;border-radius:2px;background:var(--hero-ink)}
+.sched i{position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);font-style:normal;font-size:11.5px;color:var(--hero-ink);white-space:nowrap;font-weight:600}
+.ruler-gap{height:22px}
+.herofoot{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}
+.hp{background:var(--hero-line);border-radius:999px;padding:6px 13px;font-size:13px}
+.verdict{margin-top:16px;font-size:15px}
+
+/* strip */
+.sec{margin-bottom:28px}
+.sec>h2{margin-bottom:4px}
+.strip{display:grid;grid-template-columns:repeat(3,1fr);margin-top:14px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cell{padding:16px 6px 16px 16px}
+.cell:first-child{padding-left:0}
+.cell+.cell{border-left:1px solid var(--line)}
+.cell b{display:block;font-size:clamp(20px,5.4vw,28px);font-weight:400;letter-spacing:-.02em;line-height:1.15}
+.cell span{font-size:13px;color:var(--mute)}
+.note{border-left:3px solid var(--line);padding:2px 0 2px 14px;margin-top:14px}
+.note.good{border-color:var(--mint)}.note.warn{border-color:var(--amber)}
+
+/* forms */
+.field{margin-bottom:14px}
+.field>label{display:block;font-size:13px;color:var(--mute);margin-bottom:6px;font-weight:550}
+input,select{width:100%;height:46px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--surface);outline-offset:0}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--cobalt)}
+input:focus,select:focus{border-color:var(--cobalt)}
+.moneyin{display:flex;align-items:center;border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:0 16px}
+.moneyin:focus-within{border-color:var(--cobalt)}
+.moneyin span{font-size:28px;font-weight:300;color:var(--mute)}
+.moneyin input{border:0;background:transparent;height:62px;font-size:32px;font-weight:300;letter-spacing:-.02em;padding:0 8px}
+.btn{height:46px;padding:0 20px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:600}
+.btn:hover{border-color:var(--mute)}
+.btn.primary{background:var(--cobalt);color:var(--on-cobalt);border-color:var(--cobalt)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--coral);border-color:var(--coral);background:transparent}
+.btn:disabled{opacity:.55;cursor:wait}
+.btns{display:flex;gap:10px;flex-wrap:wrap}
+.pills{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.pills::-webkit-scrollbar{display:none}
+.pill{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font-size:13.5px;font-weight:550}
+.pill.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;border-radius:9px;height:38px;font-weight:600;color:var(--mute)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(15,27,45,.18)}
+.seg button.on.inc{color:var(--mint)}.seg button.on.exp{color:var(--coral)}
+
+/* approve */
+.ticket{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:var(--shadow);transition:transform .24s ease,opacity .24s ease}
+.ticket.fly-r{transform:translateX(110%) rotate(7deg);opacity:0}
+.ticket.fly-l{transform:translateX(-110%) rotate(-7deg);opacity:0}
+.ticket.fly-d{transform:translateY(24px);opacity:0}
+.prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:10px 0 20px}
+.prog div{height:100%;background:var(--cobalt);transition:width .3s}
+.tdesc{font-size:18px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
+.amt{font-size:clamp(44px,12vw,60px);font-weight:300;letter-spacing:-.03em;line-height:1.1;margin:10px 0 18px}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 18px}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:7px 13px;font-size:13.5px}
+.chip:hover{border-color:var(--mute)}
+.chip.on{background:var(--cobalt);border-color:var(--cobalt);color:var(--on-cobalt);font-weight:600}
+.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px;margin-top:22px}
+.actions .btn{height:52px}
+.hint{margin-top:14px;text-align:center}
+.empty{text-align:center;padding:46px 12px}
+.empty .ico{width:60px;height:60px;border-radius:50%;background:var(--line);display:grid;place-items:center;margin:0 auto 16px;color:var(--mute)}
+.empty h2{margin-bottom:6px}.empty p{max-width:380px;margin:0 auto 18px}
+
+/* report */
+.donutrow{display:grid;grid-template-columns:200px 1fr;gap:22px;align-items:center;margin-top:16px}
+@media (max-width:560px){.donutrow{grid-template-columns:1fr}.donut{margin:0 auto}}
+.donut{position:relative;width:200px;height:200px}
+.donut svg{width:100%;height:100%}
+.ds{transition:opacity .15s}
+.dc{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none}
+.dc-l{font-size:12.5px;color:var(--mute);max-width:90px}
+.dc-v{font-size:22px;font-weight:500;letter-spacing:-.02em}
+.legend .row{display:grid;grid-template-columns:12px 1fr auto auto;gap:10px;align-items:center;padding:9px 6px;border-bottom:1px solid var(--line);transition:opacity .15s;border-radius:6px}
+.legend .row:last-child{border-bottom:0}
+.sw{width:12px;height:12px;border-radius:4px}
+.legend .pc{color:var(--mute);font-size:13px;width:42px;text-align:right}
+.legend .am{font-weight:550;min-width:78px;text-align:right}
+.flow{margin-top:14px}
+.flowrow{display:grid;grid-template-columns:76px 1fr auto;gap:12px;align-items:center;margin:8px 0}
+.flowrow .bar2{height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+.flowrow .bar2 div{height:100%;border-radius:5px}
+
+/* misc panels */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:16px}
+.panel h2{margin-bottom:6px}
+.drop{display:flex;align-items:center;gap:14px;border:1.5px dashed var(--line);border-radius:16px;padding:18px;cursor:pointer;margin:12px 0}
+.drop:hover,.drop.over{border-color:var(--cobalt);background:color-mix(in srgb,var(--cobalt) 6%,transparent)}
+.drop input{display:none}
+.drop b{display:block}
+#toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-90px);background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:14px;font-weight:550;box-shadow:var(--shadow);z-index:20;transition:transform .3s cubic-bezier(.2,.8,.2,1);max-width:calc(100vw - 28px)}
+#toast.show{transform:translate(-50%,0)}
+.lockwrap{min-height:100vh;display:grid;place-items:center;padding:20px}
+.lockcard{width:100%;max-width:400px}
+.lockcard .mark{width:54px;height:54px;border-radius:16px;margin-bottom:22px}
+.lockcard h1{font-size:34px;font-weight:600;letter-spacing:-.03em;margin-bottom:8px}
+.err{color:var(--coral);font-size:14px;margin-top:10px;min-height:20px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>
+'use strict';
+// ---------- helpers ----------
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const k in (attrs || {})) {
+    const v = attrs[k];
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k !== 'value' && k !== 'checked') e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) { if (c == null || c === false) continue; e.append(c.nodeType ? c : document.createTextNode(String(c))); }
+  if (attrs && attrs.value !== undefined) e.value = attrs.value;
+  if (attrs && attrs.checked) e.checked = true;
+  return e;
+}
+const ICONS = {
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  chart: '<path d="M4 20V11M10 20V4M16 20v-7M22 20H2"/>',
+  sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
+  ruler: '<path d="M3 15l12-12 6 6-12 12zM8 10l2 2M11 7l2 2M5 13l2 2"/>'
+};
+function icon(name, size) {
+  const s = h('span', { 'aria-hidden': 'true', style: 'display:inline-flex' });
+  s.innerHTML = `<svg viewBox="0 0 24 24" width="${size || 20}" height="${size || 20}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+  return s;
+}
+const aud = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' });
+const money = n => aud.format(n);
+const pad = n => String(n).padStart(2, '0');
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const isoToDate = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const daysBetween = (a, b) => Math.round((isoToDate(b) - isoToDate(a)) / 86400000);
+const niceDate = s => isoToDate(s).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+
+// ---------- encrypted vault ----------
+const KEY = 'gt_vault_v1';
+const enc = new TextEncoder(), dec = new TextDecoder();
+function toB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(s) { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+async function deriveKey(pass, salt) {
+  const km = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+let cryptoKey = null, salt = null, db = null;
+async function persist() {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, enc.encode(JSON.stringify(db)));
+  localStorage.setItem(KEY, JSON.stringify({ v: 1, salt: toB64(salt), iv: toB64(iv), data: toB64(ct) }));
+}
+async function unlock(pass) {
+  const raw = JSON.parse(localStorage.getItem(KEY));
+  const s = fromB64(raw.salt);
+  const k = await deriveKey(pass, s);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(raw.iv) }, k, fromB64(raw.data));
+  db = JSON.parse(dec.decode(pt)); cryptoKey = k; salt = s;
+}
+async function createVault(pass) {
+  salt = crypto.getRandomValues(new Uint8Array(16));
+  cryptoKey = await deriveKey(pass, salt);
+  db = { goal: null, tx: [], rules: {} };
+  await persist();
+}
+function lock() { db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
+let idleT;
+function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
+['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
+async function save() { try { await persist(); } catch (e) { flash('Could not save: ' + e.message); } }
+
+// ---------- categories & suggestions ----------
+const INCOME_CATS = ['Salary', 'Business income', 'Other income'];
+const EXPENSE_CATS = ['Groceries', 'Eating out', 'Transport', 'Fuel', 'Bills & utilities', 'Rent/Mortgage', 'Loan/EMI', 'Subscriptions', 'Health', 'Shopping', 'Entertainment', 'Travel', 'Family/Remittance', 'Stock/Inventory', 'Marketing/Ads', 'Other'];
+const ALL_CATS = [...INCOME_CATS, ...EXPENSE_CATS, 'Transfer'];
+const DEFAULT_RULES = [
+  [/woolworths|coles|aldi|\biga\b|harris farm/i, 'Groceries'],
+  [/uber eats|menulog|doordash|mcdonald|kfc|domino|cafe|restaurant|hungry jack/i, 'Eating out'],
+  [/uber|opal|myki|\bptv\b|taxi|didi/i, 'Transport'],
+  [/\bbp\b|shell|ampol|caltex|7-eleven|united petrol|fuel/i, 'Fuel'],
+  [/netflix|spotify|youtube|apple\.com|disney|prime video/i, 'Subscriptions'],
+  [/\bagl\b|origin energy|energy|water|telstra|optus|vodafone|internet|insurance/i, 'Bills & utilities'],
+  [/\brent\b|mortgage/i, 'Rent/Mortgage'],
+  [/loan|\bemi\b|repayment/i, 'Loan/EMI'],
+  [/chemist|pharmacy|medical|doctor|dental/i, 'Health'],
+  [/salary|payroll|wages/i, 'Salary'],
+  [/transfer to|transfer from|own account|savings account/i, 'Transfer'],
+  [/facebook|meta ads|google ads|instagram/i, 'Marketing/Ads']
+];
+const merchantKey = d => d.toUpperCase().replace(/[0-9#*]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+function suggest(t) {
+  const r = db.rules[merchantKey(t.desc)];
+  if (r) return { category: r.category, scope: r.scope };
+  for (const [re, cat] of DEFAULT_RULES) if (re.test(t.desc)) return { category: cat, scope: 'personal' };
+  return { category: t.amount > 0 ? 'Other income' : 'Other', scope: 'personal' };
+}
+
+// ---------- CSV import ----------
+function parseCSV(t) {
+  const rows = []; let r = [], c = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { c += '"'; i++; } else q = false; } else c += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { r.push(c); c = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; r.push(c); c = ''; if (r.some(x => x.trim() !== '')) rows.push(r); r = []; }
+    else c += ch;
+  }
+  r.push(c); if (r.some(x => x.trim() !== '')) rows.push(r);
+  return rows;
+}
+function parseDate(s) {
+  s = (s || '').trim(); let m;
+  if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`;
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/))) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${pad(+m[2])}-${pad(+m[1])}`; }
+  if (/[A-Za-z]/.test(s) && /\d/.test(s)) { const d = new Date(s); if (!isNaN(d)) return iso(d); }
+  return null;
+}
+function num(s) {
+  s = String(s || '').trim(); if (!s) return NaN;
+  const neg = /^\(.*\)$/.test(s) || /^-/.test(s) || /-$/.test(s) || /\bDR\b/i.test(s);
+  const v = parseFloat(s.replace(/[^0-9.]/g, ''));
+  return neg ? -v : v;
+}
+function importCSV(text, flip) {
+  const rows = parseCSV(text);
+  if (!rows.length) return { error: 'File looks empty.' };
+  let di, si, ai, dbi = -1, cri = -1, start = 0;
+  const first = rows[0][0] || '';
+  if (/\d/.test(first) && parseDate(first)) { di = 0; ai = 1; si = 2; }       // headerless (e.g. CBA export: date, amount, description, balance)
+  else {
+    const hd = rows[0].map(x => x.toLowerCase());
+    const find = re => hd.findIndex(x => re.test(x));
+    di = find(/date/); si = find(/desc|narr|detail|merchant|particular|memo|reference/);
+    ai = find(/^amount|value/); dbi = find(/debit|withdraw|paid out|money out/); cri = find(/credit|deposit|paid in|money in/);
+    if (di < 0 || si < 0 || (ai < 0 && dbi < 0 && cri < 0)) return { error: 'Could not find date, description and amount columns.' };
+    start = 1;
+  }
+  const have = new Set(db.tx.map(t => `${t.date}|${t.amount}|${t.desc.toLowerCase()}`));
+  let added = 0, dupes = 0, bad = 0;
+  for (let i = start; i < rows.length; i++) {
+    const r = rows[i]; const date = parseDate(r[di]); const desc = (r[si] || '').trim();
+    let amt = ai >= 0 ? num(r[ai]) : NaN;
+    if (isNaN(amt)) { const d = dbi >= 0 ? Math.abs(num(r[dbi])) : NaN, c = cri >= 0 ? Math.abs(num(r[cri])) : NaN; amt = (isNaN(c) ? 0 : c) - (isNaN(d) ? 0 : d); if (isNaN(d) && isNaN(c)) amt = NaN; }
+    if (!date || !desc || isNaN(amt) || amt === 0) { bad++; continue; }
+    if (flip) amt = -amt;
+    amt = Math.round(amt * 100) / 100;
+    const k = `${date}|${amt}|${desc.toLowerCase()}`;
+    if (have.has(k)) { dupes++; continue; }
+    have.add(k);
+    db.tx.push({ id: uid(), date, desc, amount: amt, status: 'pending', category: '', scope: 'personal' });
+    added++;
+  }
+  return { added, dupes, bad };
+}
+
+// ---------- calculations ----------
+function periodRange(p) {
+  const t = new Date(), y = t.getFullYear(), m = t.getMonth();
+  switch (p) {
+    case 'month': return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
+    case 'last': return [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))];
+    case '30': return [iso(addDays(t, -29)), iso(t)];
+    case 'fy': { const sy = m >= 6 ? y : y - 1; return [`${sy}-07-01`, `${sy + 1}-06-30`]; }
+    default: return ['0000-01-01', '9999-12-31'];
+  }
+}
+function summarise(list) {
+  let income = 0, expenses = 0; const byCat = {};
+  for (const t of list) {
+    if (t.category === 'Transfer') continue;
+    if (INCOME_CATS.includes(t.category)) income += t.amount;
+    else { expenses -= t.amount; byCat[t.category] = (byCat[t.category] || 0) - t.amount; }
+  }
+  return { income, expenses, net: income - expenses, byCat };
+}
+const approved = () => db.tx.filter(t => t.status === 'approved');
+function goalStats() {
+  const g = db.goal; if (!g) return null;
+  const today = iso(new Date());
+  const net = summarise(approved().filter(t => t.scope === 'personal' && t.date >= g.start && t.date <= today)).net;
+  const saved = g.startSaved + net;
+  const remaining = Math.max(0, g.target - saved);
+  const daysLeft = Math.max(1, daysBetween(today, g.deadline));
+  const overdue = daysBetween(today, g.deadline) < 0;
+  const perDay = remaining / daysLeft;
+  const winStart = g.start > iso(addDays(new Date(), -29)) ? g.start : iso(addDays(new Date(), -29));
+  const winDays = daysBetween(winStart, today) + 1;
+  const winNet = summarise(approved().filter(t => t.scope === 'personal' && t.date >= winStart && t.date <= today)).net;
+  const pace = winNet / winDays;
+  const totalDays = daysBetween(g.start, g.deadline);
+  const elapsed = Math.min(Math.max(daysBetween(g.start, today), 0), Math.max(totalDays, 0));
+  const expected = totalDays > 0 ? g.startSaved + (g.target - g.startSaved) * elapsed / totalDays : g.target;
+  return {
+    saved, remaining, daysLeft, overdue, perDay, perWeek: perDay * 7, perMonth: perDay * 30.44, pace, enough: winDays >= 7,
+    pct: Math.min(100, Math.max(0, saved / g.target * 100)), done: saved >= g.target,
+    expected, expPct: Math.min(100, Math.max(0, expected / g.target * 100)), ahead: saved - expected
+  };
+}
+
+// ---------- ui state ----------
+let tab = 'goal', undo = null, period = 'month', scope = 'all', draft = { scope: 'personal', type: 'expense' };
+let editGoal = false, lockErr = '', intro = false, kbd = null, busy = false, queueTotal = 0, toastT;
+function flash(m) {
+  render();
+  const t = $('#toast'); if (!t) return;
+  t.textContent = m; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3400);
+}
+function download(name, text, type) {
+  const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: type || 'text/plain' })), download: name });
+  document.body.append(a); a.click(); a.remove();
+}
+const field = (label, el) => h('div', { class: 'field' }, h('label', {}, label), el);
+const pills = (opts, cur, on) => h('div', { class: 'pills' }, opts.map(([v, l]) => h('button', { class: 'pill' + (v === cur ? ' on' : ''), onclick: () => on(v) }, l)));
+function countUp(el) {
+  const to = parseFloat(el.dataset.to), t0 = performance.now(), dur = 1000;
+  const step = now => { const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3); el.textContent = money(to * e); if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+
+// ---------- views ----------
+function lockView() {
+  const has = !!localStorage.getItem(KEY);
+  const p1 = h('input', { type: 'password', autocomplete: 'off', placeholder: has ? 'Passcode' : 'Choose a passcode (8+ characters)', 'aria-label': 'Passcode' });
+  const p2 = has ? null : h('input', { type: 'password', autocomplete: 'off', placeholder: 'Repeat passcode', 'aria-label': 'Repeat passcode' });
+  const err = h('div', { class: 'err' }, lockErr);
+  const btn = h('button', { class: 'btn primary', style: 'width:100%' }, has ? 'Unlock' : 'Create vault');
+  const go = async () => {
+    err.textContent = '';
+    try {
+      if (has) { btn.disabled = true; err.textContent = 'Unlocking…'; await unlock(p1.value); }
+      else {
+        if (p1.value.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
+        if (p1.value !== p2.value) { err.textContent = 'Passcodes do not match.'; return; }
+        btn.disabled = true; err.textContent = 'Creating vault…'; await createVault(p1.value);
+      }
+      lockErr = ''; tab = 'goal'; intro = true; bump(); render();
+    } catch (e) { lockErr = has ? 'Wrong passcode. Try again.' : 'Could not create the vault: ' + e.message; render(); }
+  };
+  btn.addEventListener('click', go);
+  [p1, p2].forEach(i => i && i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
+  return h('div', { class: 'lockwrap' }, h('div', { class: 'lockcard' },
+    h('div', { class: 'mark' }, icon('ruler', 26)),
+    h('h1', {}, has ? 'Welcome back' : 'Goal Tracker'),
+    h('p', { class: 'mute', style: 'margin-bottom:22px' }, has ? 'Your data is encrypted on this device. Enter your passcode to open it.' : 'Your data is encrypted with this passcode and stored only on this device. There is no recovery: if you forget the passcode, the data is gone.'),
+    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, err,
+    h('p', { class: 'mute small', style: 'margin-top:18px' }, 'This page cannot make network connections. Nothing leaves your device.')));
+}
+
+function goalForm(g) {
+  const name = h('input', { value: g ? g.name : '', placeholder: 'e.g. Emergency fund' });
+  const target = h('input', { type: 'number', min: '1', step: '0.01', value: g ? g.target : '', placeholder: '0.00' });
+  const dl = h('input', { type: 'date', value: g ? g.deadline : '' });
+  const ss = h('input', { type: 'number', min: '0', step: '0.01', value: g ? g.startSaved : '0' });
+  const quick = [['In 3 months', 91], ['In 6 months', 182], ['In 1 year', 365]];
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, g ? 'Edit your goal' : 'Set your savings goal'),
+      !g && h('p', { class: 'mute' }, 'Pick a target and a date. The app works out what you need to save each day, week and month.')),
+    field('Goal name', name), field('Target amount (AUD)', target),
+    field('Deadline', h('div', {}, dl, h('div', { class: 'pills', style: 'margin-top:8px' }, quick.map(([l, n]) => h('button', { class: 'pill', onclick: () => { dl.value = iso(addDays(new Date(), n)); } }, l))))),
+    field('Already saved toward it (AUD)', ss),
+    h('div', { class: 'btns', style: 'margin-top:20px' },
+      h('button', {
+        class: 'btn primary', onclick: async () => {
+          const t = parseFloat(target.value), s = parseFloat(ss.value || '0');
+          if (!name.value.trim() || !(t > 0) || !dl.value) return flash('Enter a name, target and deadline.');
+          db.goal = { name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: g ? g.start : iso(new Date()) };
+          editGoal = false; intro = true; await save(); flash('Goal saved.');
+        }
+      }, 'Save goal'),
+      g && h('button', { class: 'btn', onclick: () => { editGoal = false; render(); } }, 'Cancel'),
+      g && h('button', { class: 'btn danger', onclick: async () => { if (!confirm('Delete this goal? Your transactions stay.')) return; db.goal = null; editGoal = false; await save(); flash('Goal deleted.'); } }, 'Delete')),
+    h('p', { class: 'mute small', style: 'margin-top:16px' }, 'Progress counts approved personal income minus approved personal expenses since the goal start date. Business transactions and transfers are left out.'));
+}
+
+function goalView() {
+  const g = db.goal;
+  if (!g || editGoal) return goalForm(g);
+  const s = goalStats(); const anim = intro && !reduce; intro = false;
+  const fig = h('div', { class: 'fig cnt' }, money(s.saved));
+  if (anim) fig.dataset.to = String(s.saved);
+  const fill = h('div', { class: 'rfill', style: `width:${anim ? 0 : s.pct}%` });
+  if (anim) fill.dataset.w = String(s.pct);
+  const ruler = h('div', { class: 'ruler' }, fill, [25, 50, 75].map(p => h('div', { class: 'tick', style: `left:${p}%` })),
+    !s.done && h('div', { class: 'sched', style: `left:${s.expPct}%` }, h('i', { style: s.expPct < 12 ? 'left:0;transform:none' : s.expPct > 88 ? 'left:auto;right:0;transform:none' : '' }, 'On schedule')));
+  const verdict = s.done ? 'Goal reached. Well done.'
+    : s.ahead >= 0 ? `Ahead of schedule by ${money(s.ahead)}.`
+    : `Behind schedule by ${money(-s.ahead)}.`;
+  const paceNote = s.done ? null
+    : !s.enough ? h('div', { class: 'note' }, h('p', { class: 'mute' }, 'Approve at least a week of transactions to see your saving rate.'))
+    : s.pace >= s.perDay ? h('div', { class: 'note good' }, h('p', {}, `You are saving about ${money(s.pace)} a day over the last 30 days. You need ${money(s.perDay)} a day. Keep it up.`))
+    : h('div', { class: 'note warn' }, h('p', {}, `You are saving about ${money(s.pace)} a day over the last 30 days, but you need ${money(s.perDay)}. Closing the gap means ${money(s.perDay - s.pace)} more each day.`));
+  return h('div', {},
+    h('div', { class: 'hero' },
+      h('div', { class: 'name' }, g.name),
+      h('div', { class: 'figrow' }, fig, h('div', { class: 'of' }, `of ${money(g.target)}`)),
+      ruler, h('div', { class: 'ruler-gap' }),
+      h('div', { class: 'verdict' }, verdict),
+      h('div', { class: 'herofoot' }, h('span', { class: 'hp' }, `${Math.round(s.pct)}% saved`), h('span', { class: 'hp' }, `Due ${niceDate(g.deadline)}`), !s.done && !s.overdue && h('span', { class: 'hp' }, `${s.daysLeft} days left`))),
+    !s.done && h('div', { class: 'sec' }, h('h2', {}, 'Savings you need'),
+      s.overdue ? h('p', { class: 'amber', style: 'margin-top:6px' }, 'The deadline has passed. Edit the goal to set a new date.')
+        : h('div', {}, h('p', { class: 'mute' }, `${money(s.remaining)} to go in ${s.daysLeft} days.`),
+          h('div', { class: 'strip' }, h('div', { class: 'cell' }, h('b', {}, money(s.perDay)), h('span', {}, 'a day')), h('div', { class: 'cell' }, h('b', {}, money(s.perWeek)), h('span', {}, 'a week')), h('div', { class: 'cell' }, h('b', {}, money(s.perMonth)), h('span', {}, 'a month'))),
+          paceNote)),
+    h('button', { class: 'btn', onclick: () => { editGoal = true; render(); } }, 'Edit goal'));
+}
+
+function approveView() {
+  const pend = db.tx.filter(t => t.status === 'pending');
+  if (pend.length > queueTotal) queueTotal = pend.length;
+  if (!pend.length) queueTotal = 0;
+  kbd = null;
+  const undoBtn = undo && h('div', { class: 'hint' }, h('button', { class: 'ghost', onclick: async () => { const t = db.tx.find(x => x.id === undo.id); if (t) { t.status = 'pending'; t.category = ''; } undo = null; await save(); render(); } }, 'Undo last decision'));
+  if (!pend.length) return h('div', {}, h('div', { class: 'empty' }, h('div', { class: 'ico' }, icon('check', 28)), h('h2', {}, 'You are all caught up'),
+    h('p', { class: 'mute' }, 'Imported transactions wait here until you approve each one. Import a bank CSV or type a transaction to get started.'),
+    h('button', { class: 'btn primary', onclick: () => { tab = 'add'; render(); } }, 'Go to Add')), undoBtn);
+  const t = pend[0], sg = suggest(t);
+  let cat = sg.category, sc = sg.scope;
+  const cats = t.amount < 0 ? [...EXPENSE_CATS, 'Transfer'] : [...INCOME_CATS, 'Transfer', ...EXPENSE_CATS];
+  const chipEls = cats.map(c => h('button', { class: 'chip' + (c === cat ? ' on' : ''), onclick: () => { cat = c; chipEls.forEach(e => e.classList.toggle('on', e.textContent === c)); } }, c));
+  const segP = h('button', { class: sc === 'personal' ? 'on' : '', onclick: () => { sc = 'personal'; segP.className = 'on'; segB.className = ''; } }, 'Personal');
+  const segB = h('button', { class: sc === 'business' ? 'on' : '', onclick: () => { sc = 'business'; segB.className = 'on'; segP.className = ''; } }, 'Business');
+  const card = h('div', { class: 'ticket' });
+  const decide = status => {
+    if (busy) return; busy = true;
+    card.classList.add(status === 'approved' ? 'fly-r' : status === 'rejected' ? 'fly-l' : 'fly-d');
+    setTimeout(async () => {
+      if (status === 'skip') { db.tx.splice(db.tx.indexOf(t), 1); db.tx.push(t); }
+      else {
+        t.status = status;
+        if (status === 'approved') { t.category = cat; t.scope = sc; db.rules[merchantKey(t.desc)] = { category: cat, scope: sc }; }
+        undo = { id: t.id }; await save();
+      }
+      busy = false; render();
+    }, reduce ? 0 : 240);
+  };
+  kbd = { approve: () => decide('approved'), reject: () => decide('rejected'), skip: () => decide('skip') };
+  const done = queueTotal - pend.length;
+  card.append(
+    h('div', { class: 'mute small' }, `${done} of ${queueTotal} reviewed`),
+    h('div', { class: 'prog' }, h('div', { style: `width:${queueTotal ? done / queueTotal * 100 : 0}%` })),
+    h('div', { class: 'tdesc' }, t.desc), h('div', { class: 'mute small' }, niceDate(t.date)),
+    h('div', { class: 'amt ' + (t.amount < 0 ? '' : 'mint') }, money(t.amount)),
+    h('div', { class: 'mute small' }, 'Category'), h('div', { class: 'chips' }, chipEls),
+    h('div', { class: 'mute small', style: 'margin-bottom:6px' }, 'Belongs to'), h('div', { class: 'seg' }, segP, segB),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn primary', onclick: kbd.approve }, 'Approve'),
+      h('button', { class: 'btn danger', onclick: kbd.reject }, 'Reject'),
+      h('button', { class: 'btn', onclick: kbd.skip }, 'Skip')));
+  return h('div', {}, card, h('p', { class: 'mute small hint' }, 'Keyboard: A approves, R rejects, S skips.'), undoBtn);
+}
+
+function addView() {
+  const type = draft.type;
+  const amt = h('input', { type: 'number', min: '0', step: '0.01', placeholder: '0.00', inputmode: 'decimal', 'aria-label': 'Amount' });
+  const date = h('input', { type: 'date', value: iso(new Date()) });
+  const desc = h('input', { placeholder: 'What was it?' });
+  const cat = h('select', {}, (type === 'income' ? INCOME_CATS : EXPENSE_CATS).map(c => h('option', { value: c }, c)));
+  const toggle = (key, val) => () => { draft[key] = val; render(); };
+  const flip = h('input', { type: 'checkbox' });
+  const file = h('input', { type: 'file', accept: '.csv,text/csv' });
+  const fname = h('span', { class: 'mute small' }, 'No file chosen');
+  file.addEventListener('change', () => { fname.textContent = file.files[0] ? file.files[0].name : 'No file chosen'; });
+  const drop = h('label', { class: 'drop' }, icon('upload', 26), h('div', {}, h('b', {}, 'Drop a CSV here or choose a file'), fname), file);
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) { file.files = e.dataTransfer.files; fname.textContent = file.files[0].name; } });
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, 'Add a transaction'), h('p', { class: 'mute' }, 'Entries you type are approved straight away.')),
+    h('div', { class: 'seg', style: 'margin-bottom:16px' },
+      h('button', { class: type === 'expense' ? 'on exp' : '', onclick: toggle('type', 'expense') }, 'Expense'),
+      h('button', { class: type === 'income' ? 'on inc' : '', onclick: toggle('type', 'income') }, 'Income')),
+    h('div', { class: 'field' }, h('div', { class: 'moneyin' }, h('span', {}, '$'), amt)),
+    field('Date', date), field('Description', desc), field('Category', cat),
+    field('Belongs to', h('div', { class: 'seg' },
+      h('button', { class: draft.scope === 'personal' ? 'on' : '', onclick: toggle('scope', 'personal') }, 'Personal'),
+      h('button', { class: draft.scope === 'business' ? 'on' : '', onclick: toggle('scope', 'business') }, 'Business'))),
+    h('button', {
+      class: 'btn primary', style: 'width:100%', onclick: async () => {
+        const a = parseFloat(amt.value);
+        if (!(a > 0) || !date.value || !desc.value.trim()) return flash('Enter an amount, date and description.');
+        db.tx.push({ id: uid(), date: date.value, desc: desc.value.trim(), amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope });
+        await save(); flash('Transaction added.');
+      }
+    }, 'Add transaction'),
+    h('div', { class: 'panel', style: 'margin-top:30px' }, h('h2', {}, 'Import a bank CSV'),
+      h('p', { class: 'mute small' }, 'The file is read in your browser and never uploaded. Each row goes to Approve for review. Duplicates are skipped.'),
+      drop,
+      h('label', { style: 'display:flex;gap:10px;align-items:center;margin:4px 0 16px;color:var(--mute);font-size:14px' }, flip, 'Flip signs (use this if expenses show as positive)'),
+      h('button', {
+        class: 'btn primary', onclick: () => {
+          const f = file.files[0]; if (!f) return flash('Choose a CSV file first.');
+          const rd = new FileReader();
+          rd.onload = async () => {
+            const r = importCSV(String(rd.result), flip.checked);
+            if (r.error) return flash(r.error);
+            await save(); tab = 'approve'; flash(`Imported ${r.added} to review. Skipped ${r.dupes} duplicates and ${r.bad} unreadable rows.`);
+          };
+          rd.readAsText(f);
+        }
+      }, 'Import file')));
+}
+
+const PAL = ['#2446d8', '#0f9d6e', '#e0a43a', '#d6453d', '#8a63d2', '#2fb5c9', '#e07b3a', '#7a8a99'];
+function donut(entries, total) {
+  const C = 2 * Math.PI * 44; let acc = 0;
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 120 120'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Spending by category');
+  const base = document.createElementNS(NS, 'circle');
+  [['cx', 60], ['cy', 60], ['r', 44], ['fill', 'none'], ['stroke', 'var(--line)'], ['stroke-width', 16]].forEach(([k, v]) => base.setAttribute(k, v));
+  svg.append(base);
+  const segs = entries.map(([c, v], i) => {
+    const len = v / total * C, el = document.createElementNS(NS, 'circle');
+    [['cx', 60], ['cy', 60], ['r', 44], ['fill', 'none'], ['stroke', PAL[i % PAL.length]], ['stroke-width', 16], ['class', 'ds'],
+      ['stroke-dasharray', `${Math.max(len - 1.4, 0.6)} ${C}`], ['stroke-dashoffset', -acc], ['transform', 'rotate(-90 60 60)']].forEach(([k, val]) => el.setAttribute(k, val));
+    acc += len; svg.append(el); return el;
+  });
+  const lbl = h('div', { class: 'dc-l' }, 'Total spent'), val = h('div', { class: 'dc-v' }, money(total));
+  return {
+    el: h('div', { class: 'donut' }, svg, h('div', { class: 'dc' }, lbl, val)),
+    show(i) { segs.forEach((s, j) => { s.style.opacity = j === i ? 1 : .25; }); lbl.textContent = entries[i][0]; val.textContent = money(entries[i][1]); },
+    clear() { segs.forEach(s => { s.style.opacity = 1; }); lbl.textContent = 'Total spent'; val.textContent = money(total); }
+  };
+}
+
+function reportView() {
+  const [a, b] = periodRange(period);
+  let list = approved().filter(t => t.date >= a && t.date <= b);
+  if (scope !== 'all') list = list.filter(t => t.scope === scope);
+  const s = summarise(list);
+  const pending = db.tx.filter(t => t.status === 'pending').length;
+  const gs = goalStats();
+  const periods = [['month', 'This month'], ['last', 'Last month'], ['30', 'Last 30 days'], ['fy', 'This financial year'], ['all', 'All time']];
+  const entries = Object.entries(s.byCat).filter(e => e[1] > 0).sort((x, y) => y[1] - x[1]);
+  const dTotal = entries.reduce((n, e) => n + e[1], 0);
+  const peak = Math.max(s.income, s.expenses, 1);
+  let chart = null, legend = null;
+  if (entries.length) {
+    chart = donut(entries, dTotal);
+    legend = h('div', { class: 'legend' }, entries.map(([c, v], i) => {
+      const row = h('div', { class: 'row' }, h('span', { class: 'sw', style: `background:${PAL[i % PAL.length]}` }), h('span', {}, c), h('span', { class: 'pc' }, Math.round(v / dTotal * 100) + '%'), h('span', { class: 'am' }, money(v)));
+      row.addEventListener('mouseenter', () => chart.show(i)); row.addEventListener('mouseleave', () => chart.clear());
+      return row;
+    }));
+    chart.el.querySelectorAll('.ds').forEach((seg, i) => { seg.style.pointerEvents = 'stroke'; seg.addEventListener('mouseenter', () => chart.show(i)); seg.addEventListener('mouseleave', () => chart.clear()); });
+  }
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, 'Report'), h('p', { class: 'mute' }, 'Only approved transactions are counted.')),
+    pills(periods, period, v => { period = v; render(); }),
+    h('div', { style: 'margin:12px 0 4px' }, h('div', { class: 'seg' }, [['all', 'Both'], ['personal', 'Personal'], ['business', 'Business']].map(([v, l]) => h('button', { class: scope === v ? 'on' : '', onclick: () => { scope = v; render(); } }, l)))),
+    pending > 0 && h('div', { class: 'note warn' }, h('p', {}, `${pending} transactions are waiting for approval and are not counted yet.`)),
+    h('div', { class: 'strip' },
+      h('div', { class: 'cell' }, h('b', { class: 'coral' }, money(s.expenses)), h('span', {}, 'Expenses')),
+      h('div', { class: 'cell' }, h('b', { class: 'mint' }, money(s.income)), h('span', {}, 'Income')),
+      h('div', { class: 'cell' }, h('b', {}, money(s.net)), h('span', {}, 'Net'))),
+    h('div', { class: 'flow' },
+      h('div', { class: 'flowrow' }, h('span', { class: 'mute small' }, 'Income'), h('div', { class: 'bar2' }, h('div', { style: `width:${Math.max(0, s.income) / peak * 100}%;background:var(--mint)` })), h('span', { class: 'small' }, money(s.income))),
+      h('div', { class: 'flowrow' }, h('span', { class: 'mute small' }, 'Expenses'), h('div', { class: 'bar2' }, h('div', { style: `width:${Math.max(0, s.expenses) / peak * 100}%;background:var(--coral)` })), h('span', { class: 'small' }, money(s.expenses)))),
+    gs && !gs.done && !gs.overdue && h('div', { class: 'note good' }, h('p', {}, `To reach "${db.goal.name}" you need to save ${money(gs.perWeek)} a week.`)),
+    h('div', { class: 'sec', style: 'margin-top:30px' }, h('h2', {}, 'Where the money went'),
+      entries.length ? h('div', { class: 'donutrow' }, chart.el, legend) : h('p', { class: 'mute', style: 'margin-top:8px' }, 'No approved expenses in this period yet.')));
+}
+
+function settingsView() {
+  const np = h('input', { type: 'password', placeholder: 'New passcode (8+ characters)', autocomplete: 'off' });
+  const bk = h('input', { type: 'file', accept: '.json' });
+  const er = h('input', { placeholder: 'Type ERASE to confirm' });
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, 'Settings')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Privacy'),
+      h('p', { class: 'mute', style: 'margin-bottom:14px' }, 'Data is encrypted with AES-256-GCM using a key derived from your passcode, and stored only in this browser. The page is locked down so it cannot send data anywhere. It locks itself after 5 idle minutes.'),
+      h('button', { class: 'btn', onclick: lock }, 'Lock now')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Change passcode'), h('div', { style: 'height:8px' }), np,
+      h('div', { style: 'margin-top:12px' }, h('button', {
+        class: 'btn', onclick: async () => {
+          if (np.value.length < 8) return flash('Use at least 8 characters.');
+          salt = crypto.getRandomValues(new Uint8Array(16)); cryptoKey = await deriveKey(np.value, salt); await save(); flash('Passcode changed.');
+        }
+      }, 'Change passcode'))),
+    h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
+      h('div', { class: 'btns', style: 'margin:10px 0 16px' },
+        h('button', { class: 'btn', onclick: () => download('goal-tracker-backup.json', localStorage.getItem(KEY), 'application/json') }, 'Download encrypted backup'),
+        h('button', {
+          class: 'btn', onclick: () => {
+            if (!confirm('This CSV is not encrypted. Keep it somewhere safe. Continue?')) return;
+            const q = v => `"${String(v).replace(/"/g, '""')}"`;
+            download('approved-transactions.csv', ['Date,Description,Amount,Category,Scope', ...approved().sort((x, y) => x.date < y.date ? -1 : 1).map(t => [t.date, q(t.desc), t.amount, q(t.category), t.scope].join(','))].join('\n'), 'text/csv');
+          }
+        }, 'Export approved as CSV')),
+      field('Restore from an encrypted backup (replaces what is here)', bk),
+      h('button', {
+        class: 'btn', onclick: () => {
+          const f = bk.files[0]; if (!f) return flash('Choose a backup file first.');
+          if (!confirm('Replace the current vault with this backup?')) return;
+          const rd = new FileReader();
+          rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); db = null; cryptoKey = null; lockErr = ''; render(); } catch (e) { flash('That file is not a valid backup.'); } };
+          rd.readAsText(f);
+        }
+      }, 'Restore backup')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
+}
+
+addEventListener('keydown', e => {
+  if (!db || tab !== 'approve' || !kbd || e.metaKey || e.ctrlKey || e.altKey) return;
+  const tg = e.target && e.target.tagName; if (tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA') return;
+  const k = e.key.toLowerCase();
+  if (k === 'a' || k === 'arrowright') kbd.approve(); else if (k === 'r' || k === 'arrowleft') kbd.reject(); else if (k === 's') kbd.skip();
+});
+
+function render() {
+  const app = $('#app'); app.replaceChildren();
+  if (!db) { kbd = null; app.append(lockView()); return; }
+  const pend = db.tx.filter(t => t.status === 'pending').length;
+  const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
+  const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
+  const view = { goal: goalView, approve: approveView, add: addView, report: reportView, settings: settingsView }[tab]();
+  app.append(h('div', { class: 'wrap' },
+    h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today))),
+      h('button', { class: 'ghost', onclick: lock, 'aria-label': 'Lock the app' }, icon('lock', 16), 'Lock')),
+    view));
+  app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: tab === k ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
+    icon(ic, 21), l, k === 'approve' && pend > 0 && h('span', { class: 'badge' }, pend)))));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll('[data-w]').forEach(e => { e.style.width = e.dataset.w + '%'; });
+    document.querySelectorAll('.cnt[data-to]').forEach(countUp);
+  }));
+}
+render();
+</script>
+</body>
+</html>

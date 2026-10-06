@@ -1,0 +1,34 @@
+# Goal Tracker
+
+A private savings goal tracker in a single HTML file. Set a goal, bring in your bank transactions, approve each one by hand, and see how much you need to save and how much you have spent.
+
+## Use it
+
+1. Download `goal-tracker.html` and save it somewhere permanent.
+2. Open it in Chrome, Safari or Firefox.
+3. Choose a passcode (8 or more characters). There is no recovery, so keep it safe.
+
+Your data stays in that browser on that device. A different browser or device starts empty unless you restore a backup.
+
+## What it does
+
+- **Goal:** target, deadline and amount already saved. Shows what you need to save per day, week and month, and whether you are ahead of or behind schedule.
+- **Approve:** imported transactions wait in a queue. You approve, reject or skip each one and set its category and whether it is personal or business. Only approved items reach the report.
+- **Add:** type in income and expenses, or import a bank CSV (CBA-style export with no header row, or any CSV with date, description and amount or debit and credit columns). Duplicates are skipped.
+- **Report:** expenses, income and net by period, filtered to personal, business or both, with a spending breakdown.
+
+Keyboard shortcuts on the Approve screen: A approves, R rejects, S skips.
+
+## Privacy
+
+- Data is encrypted with AES-256-GCM. The key comes from your passcode through PBKDF2 (310,000 iterations, SHA-256).
+- The page has a Content Security Policy that blocks all network requests. It cannot send your data anywhere.
+- The app locks itself after 5 idle minutes.
+- Settings has an encrypted backup and restore. The CSV export is not encrypted, so store it carefully.
+- Delete the bank CSV from your disk after importing it.
+
+## Not built yet
+
+- Live bank sync (Australian Open Banking through an accredited provider).
+- Recurring bill detection and a daily "safe to spend" figure.
+- Multiple goals.
