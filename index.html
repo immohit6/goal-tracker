@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1b2d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Goals">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; manifest-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <title>Goal Tracker</title>
 <style>
 :root{
@@ -25,7 +33,7 @@ body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--sans)
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--cobalt);outline-offset:2px}
-.wrap{max-width:760px;margin:0 auto;padding:18px 18px 130px}
+.wrap{max-width:760px;margin:0 auto;padding:calc(18px + env(safe-area-inset-top)) 18px calc(130px + env(safe-area-inset-bottom))}
 h1,h2,h3{margin:0;letter-spacing:-.02em}
 h2{font-size:19px;font-weight:650}
 p{margin:0}
@@ -42,7 +50,7 @@ p{margin:0}
 .ghost:hover{background:var(--surface)}
 
 /* dock */
-.dock{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);display:flex;gap:2px;padding:6px;border-radius:22px;background:var(--dock);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:var(--shadow);border:1px solid var(--line);z-index:5;max-width:calc(100vw - 20px)}
+.dock{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:2px;padding:6px;border-radius:22px;background:var(--dock);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:var(--shadow);border:1px solid var(--line);z-index:5;max-width:calc(100vw - 20px)}
 .dock button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:62px;padding:8px 10px;border:0;background:transparent;border-radius:16px;color:var(--mute);font-size:11.5px;font-weight:550}
 .dock button.on{background:var(--ink);color:var(--paper)}
 .dock .badge{position:absolute;top:3px;right:9px;background:var(--coral);color:#fff;border-radius:9px;min-width:17px;height:17px;padding:0 5px;font-size:10.5px;line-height:17px;font-weight:700}
@@ -213,7 +221,7 @@ async function deriveKey(pass, salt) {
   const km = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
-let cryptoKey = null, salt = null, db = null;
+let cryptoKey = null, salt = null, db = null, curPass = null;
 async function persist() {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, enc.encode(JSON.stringify(db)));
@@ -224,15 +232,67 @@ async function unlock(pass) {
   const s = fromB64(raw.salt);
   const k = await deriveKey(pass, s);
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(raw.iv) }, k, fromB64(raw.data));
-  db = JSON.parse(dec.decode(pt)); cryptoKey = k; salt = s;
+  db = JSON.parse(dec.decode(pt)); cryptoKey = k; salt = s; curPass = pass;
 }
 async function createVault(pass) {
   salt = crypto.getRandomValues(new Uint8Array(16));
   cryptoKey = await deriveKey(pass, salt);
-  db = { goal: null, tx: [], rules: {} };
+  db = { goal: null, tx: [], rules: {} }; curPass = pass;
   await persist();
 }
-function lock() { db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
+// ---------- Face ID (WebAuthn PRF) ----------
+// The passcode is stored only after being encrypted with a key that the phone releases
+// after a Face ID check. Without Face ID the stored copy is useless.
+const BIO = 'gt_bio_v1';
+const bioSupported = () => location.protocol === 'https:' && !!window.PublicKeyCredential && !!navigator.credentials;
+const bioRecord = () => { try { return JSON.parse(localStorage.getItem(BIO)); } catch (e) { return null; } };
+async function prfKey(credId, prfSalt) {
+  const cred = await navigator.credentials.get({ publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)), rpId: location.hostname,
+    allowCredentials: [{ type: 'public-key', id: credId }], userVerification: 'required', timeout: 60000,
+    extensions: { prf: { eval: { first: prfSalt } } } } });
+  const r = cred.getClientExtensionResults().prf;
+  if (!r || !r.results || !r.results.first) throw new Error('This phone or browser does not support the secure Face ID unlock. Use your passcode.');
+  return crypto.subtle.importKey('raw', r.results.first, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+async function enableBio() {
+  if (!bioSupported()) throw new Error('Face ID needs the https link of the app, not a downloaded file.');
+  if (!curPass) throw new Error('Unlock the app with your passcode first.');
+  const created = await navigator.credentials.create({ publicKey: {
+    rp: { name: 'Goal Tracker', id: location.hostname },
+    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'goal-tracker', displayName: 'Goal Tracker' },
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+    timeout: 60000, extensions: { prf: {} } } });
+  const ext = created.getClientExtensionResults();
+  if (!ext.prf || !ext.prf.enabled) throw new Error('This phone or browser does not support the secure Face ID unlock. Keep using your passcode.');
+  const credId = new Uint8Array(created.rawId), prfSalt = crypto.getRandomValues(new Uint8Array(32));
+  const k = await prfKey(credId, prfSalt);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, enc.encode(curPass));
+  localStorage.setItem(BIO, JSON.stringify({ cred: toB64(credId), salt: toB64(prfSalt), iv: toB64(iv), data: toB64(ct) }));
+}
+async function bioUnlock() {
+  const r = bioRecord(); if (!r) throw new Error('Face ID is not set up.');
+  const k = await prfKey(fromB64(r.cred), fromB64(r.salt));
+  const pass = dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(r.iv) }, k, fromB64(r.data)));
+  await unlock(pass);
+}
+function askPersist() { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
+function bioPanel() {
+  const on = !!bioRecord();
+  return h('div', { class: 'panel' }, h('h2', {}, 'Face ID'),
+    h('p', { class: 'mute', style: 'margin-bottom:14px' }, bioSupported()
+      ? 'Unlock with Face ID instead of typing your passcode. Your passcode still works as the backup way in.'
+      : 'Face ID works when you open the app from its https link (the GitHub Pages address), not from a downloaded file.'),
+    bioSupported() && h('button', { class: 'btn' + (on ? '' : ' primary'), onclick: async () => {
+      if (on) { localStorage.removeItem(BIO); return flash('Face ID is off.'); }
+      try { await enableBio(); flash('Face ID is on. Lock the app and try it.'); }
+      catch (e) { flash(e && e.name === 'NotAllowedError' ? 'Face ID was cancelled.' : (e && e.message) || 'Could not turn on Face ID.'); }
+    } }, on ? 'Turn off Face ID' : 'Turn on Face ID'));
+}
+function lock() { curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
 let idleT;
 function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
 ['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
@@ -404,16 +464,19 @@ function lockView() {
         if (p1.value !== p2.value) { err.textContent = 'Passcodes do not match.'; return; }
         btn.disabled = true; err.textContent = 'Creating vault…'; await createVault(p1.value);
       }
-      lockErr = ''; tab = 'goal'; intro = true; bump(); render();
+      lockErr = ''; tab = 'goal'; intro = true; bump(); askPersist(); render();
     } catch (e) { lockErr = has ? 'Wrong passcode. Try again.' : 'Could not create the vault: ' + e.message; render(); }
   };
   btn.addEventListener('click', go);
+  const bioBtn = (has && bioSupported() && bioRecord()) ? h('button', { class: 'btn', style: 'width:100%;margin-top:10px', onclick: async () => {
+    try { await bioUnlock(); lockErr = ''; tab = 'goal'; intro = true; bump(); askPersist(); render(); }
+    catch (e) { lockErr = 'Face ID did not work. Use your passcode.'; render(); } } }, 'Unlock with Face ID') : null;
   [p1, p2].forEach(i => i && i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
   return h('div', { class: 'lockwrap' }, h('div', { class: 'lockcard' },
     h('div', { class: 'mark' }, icon('ruler', 26)),
     h('h1', {}, has ? 'Welcome back' : 'Goal Tracker'),
-    h('p', { class: 'mute', style: 'margin-bottom:22px' }, has ? 'Your data is encrypted on this device. Enter your passcode to open it.' : 'Your data is encrypted with this passcode and stored only on this device. There is no recovery: if you forget the passcode, the data is gone.'),
-    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, err,
+    h('p', { class: 'mute', style: 'margin-bottom:22px' }, has ? 'Your data is encrypted on this device. Enter your passcode to open it.' : 'Your data is encrypted with this passcode and stored only on this device. There is no recovery: if you forget the passcode, the data is gone. If you already made a vault, open the app the same way as before: private tabs, other browsers and home-screen icons each keep their own data.'),
+    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, bioBtn, err,
     h('p', { class: 'mute small', style: 'margin-top:18px' }, 'This page cannot make network connections. Nothing leaves your device.')));
 }
 
@@ -643,9 +706,10 @@ function settingsView() {
       h('div', { style: 'margin-top:12px' }, h('button', {
         class: 'btn', onclick: async () => {
           if (np.value.length < 8) return flash('Use at least 8 characters.');
-          salt = crypto.getRandomValues(new Uint8Array(16)); cryptoKey = await deriveKey(np.value, salt); await save(); flash('Passcode changed.');
+          const hadBio = !!bioRecord(); salt = crypto.getRandomValues(new Uint8Array(16)); cryptoKey = await deriveKey(np.value, salt); curPass = np.value; localStorage.removeItem(BIO); await save(); flash(hadBio ? 'Passcode changed. Turn Face ID back on to use it again.' : 'Passcode changed.');
         }
       }, 'Change passcode'))),
+    bioPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
       h('div', { class: 'btns', style: 'margin:10px 0 16px' },
         h('button', { class: 'btn', onclick: () => download('goal-tracker-backup.json', localStorage.getItem(KEY), 'application/json') }, 'Download encrypted backup'),
@@ -662,12 +726,12 @@ function settingsView() {
           const f = bk.files[0]; if (!f) return flash('Choose a backup file first.');
           if (!confirm('Replace the current vault with this backup?')) return;
           const rd = new FileReader();
-          rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); db = null; cryptoKey = null; lockErr = ''; render(); } catch (e) { flash('That file is not a valid backup.'); } };
+          rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); localStorage.removeItem(BIO); db = null; cryptoKey = null; lockErr = ''; render(); } catch (e) { flash('That file is not a valid backup.'); } };
           rd.readAsText(f);
         }
       }, 'Restore backup')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
 
 addEventListener('keydown', e => {

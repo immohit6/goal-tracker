@@ -10,7 +10,9 @@ A private savings goal tracker in a single HTML file. Set a goal, bring in your 
 2. Open it in Chrome, Safari or Firefox.
 3. Choose a passcode (8 or more characters). There is no recovery, so keep it safe.
 
-Your data stays in that browser on that device. A different browser or device starts empty unless you restore a backup.
+Your data stays in that browser on that device. A different browser, a private tab, a different home-screen icon or a different device starts empty unless you restore a backup. Pick one way to open the app and stick to it.
+
+**On iPhone:** open the app link in Safari, tap Share, then Add to Home Screen, and use that icon from then on. In Settings, turn on Face ID. Back up weekly with Settings, Download encrypted backup.
 
 ## What it does
 
