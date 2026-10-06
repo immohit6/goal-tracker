@@ -597,7 +597,7 @@ function addView() {
   const type = draft.type;
   const amt = h('input', { type: 'number', min: '0', step: '0.01', placeholder: '0.00', inputmode: 'decimal', 'aria-label': 'Amount' });
   const date = h('input', { type: 'date', value: iso(new Date()) });
-  const desc = h('input', { placeholder: 'What was it?' });
+  const desc = h('input', { placeholder: 'Optional, e.g. lunch' });
   const cat = h('select', {}, (type === 'income' ? INCOME_CATS : EXPENSE_CATS).map(c => h('option', { value: c }, c)));
   const toggle = (key, val) => () => { draft[key] = val; render(); };
   const flip = h('input', { type: 'checkbox' });
@@ -614,15 +614,15 @@ function addView() {
       h('button', { class: type === 'expense' ? 'on exp' : '', onclick: toggle('type', 'expense') }, 'Expense'),
       h('button', { class: type === 'income' ? 'on inc' : '', onclick: toggle('type', 'income') }, 'Income')),
     h('div', { class: 'field' }, h('div', { class: 'moneyin' }, h('span', {}, '$'), amt)),
-    field('Date', date), field('Description', desc), field('Category', cat),
+    field('Date', date), field('Description (optional)', desc), field('Category', cat),
     field('Belongs to', h('div', { class: 'seg' },
       h('button', { class: draft.scope === 'personal' ? 'on' : '', onclick: toggle('scope', 'personal') }, 'Personal'),
       h('button', { class: draft.scope === 'business' ? 'on' : '', onclick: toggle('scope', 'business') }, 'Business'))),
     h('button', {
       class: 'btn primary', style: 'width:100%', onclick: async () => {
         const a = parseFloat(amt.value);
-        if (!(a > 0) || !date.value || !desc.value.trim()) return flash('Enter an amount, date and description.');
-        db.tx.push({ id: uid(), date: date.value, desc: desc.value.trim(), amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope });
+        if (!(a > 0) || !date.value) return flash('Enter an amount and a date.');
+        db.tx.push({ id: uid(), date: date.value, desc: desc.value.trim() || cat.value, amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope });
         await save(); flash('Transaction added.');
       }
     }, 'Add transaction'),
