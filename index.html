@@ -495,6 +495,7 @@ function goalForm(g) {
   const target = h('input', { type: 'number', min: '1', step: '0.01', value: g ? g.target : '', placeholder: '0.00' });
   const dl = h('input', { type: 'date', value: g ? g.deadline : '' });
   const ss = h('input', { type: 'number', min: '0', step: '0.01', value: g ? g.startSaved : '0' });
+  const st = h('input', { type: 'date', value: g ? g.start : iso(new Date()) });
   const quick = [['In 3 months', 91], ['In 6 months', 182], ['In 1 year', 365]];
   return h('div', {},
     h('div', { class: 'sec' }, h('h2', {}, g ? 'Edit your goal' : 'Set your savings goal'),
@@ -502,12 +503,15 @@ function goalForm(g) {
     field('Goal name', name), field('Target amount (AUD)', target),
     field('Deadline', h('div', {}, dl, h('div', { class: 'pills', style: 'margin-top:8px' }, quick.map(([l, n]) => h('button', { class: 'pill', onclick: () => { dl.value = iso(addDays(new Date(), n)); } }, l))))),
     field('Already saved toward it (AUD)', ss),
+    field('Count transactions from', h('div', {}, st, h('p', { class: 'mute small', style: 'margin-top:6px' }, 'Only approved personal transactions dated on or after this day count toward the goal. Set it to the day your "already saved" amount was true.'))),
     h('div', { class: 'btns', style: 'margin-top:20px' },
       h('button', {
         class: 'btn primary', onclick: async () => {
           const t = parseFloat(target.value), s = parseFloat(ss.value || '0');
           if (!name.value.trim() || !(t > 0) || !dl.value) return flash('Enter a name, target and deadline.');
-          db.goal = { name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: g ? g.start : iso(new Date()) };
+          const startDay = st.value || iso(new Date());
+          if (startDay > dl.value) return flash('The start date must be before the deadline.');
+          db.goal = { name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: startDay };
           editGoal = false; intro = true; await save(); flash('Goal saved.');
         }
       }, 'Save goal'),
@@ -539,6 +543,7 @@ function goalView() {
       h('div', { class: 'figrow' }, fig, h('div', { class: 'of' }, `of ${money(g.target)}`)),
       ruler, h('div', { class: 'ruler-gap' }),
       h('div', { class: 'verdict' }, verdict),
+      h('div', { class: 'name', style: 'margin-top:6px;font-size:13px' }, `Counts approved personal income and spending dated ${niceDate(g.start)} or later.`),
       h('div', { class: 'herofoot' }, h('span', { class: 'hp' }, `${Math.round(s.pct)}% saved`), h('span', { class: 'hp' }, `Due ${niceDate(g.deadline)}`), !s.done && !s.overdue && h('span', { class: 'hp' }, `${s.daysLeft} days left`))),
     !s.done && h('div', { class: 'sec' }, h('h2', {}, 'Savings you need'),
       s.overdue ? h('p', { class: 'amber', style: 'margin-top:6px' }, 'The deadline has passed. Edit the goal to set a new date.')
@@ -645,7 +650,7 @@ function addView() {
 }
 
 const PAL = ['#2446d8', '#0f9d6e', '#e0a43a', '#d6453d', '#8a63d2', '#2fb5c9', '#e07b3a', '#7a8a99'];
-function donut(entries, total) {
+function donut(entries, total, centre) {
   const C = 2 * Math.PI * 44; let acc = 0;
   const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 120 120'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Spending by category');
   const base = document.createElementNS(NS, 'circle');
@@ -657,11 +662,12 @@ function donut(entries, total) {
       ['stroke-dasharray', `${Math.max(len - 1.4, 0.6)} ${C}`], ['stroke-dashoffset', -acc], ['transform', 'rotate(-90 60 60)']].forEach(([k, val]) => el.setAttribute(k, val));
     acc += len; svg.append(el); return el;
   });
-  const lbl = h('div', { class: 'dc-l' }, 'Total spent'), val = h('div', { class: 'dc-v' }, money(total));
+  const shown = centre === undefined ? total : centre;
+  const lbl = h('div', { class: 'dc-l' }, 'Total spent'), val = h('div', { class: 'dc-v' }, money(shown));
   return {
     el: h('div', { class: 'donut' }, svg, h('div', { class: 'dc' }, lbl, val)),
     show(i) { segs.forEach((s, j) => { s.style.opacity = j === i ? 1 : .25; }); lbl.textContent = entries[i][0]; val.textContent = money(entries[i][1]); },
-    clear() { segs.forEach(s => { s.style.opacity = 1; }); lbl.textContent = 'Total spent'; val.textContent = money(total); }
+    clear() { segs.forEach(s => { s.style.opacity = 1; }); lbl.textContent = 'Total spent'; val.textContent = money(shown); }
   };
 }
 
@@ -675,15 +681,16 @@ function reportView() {
   const periods = [['month', 'This month'], ['last', 'Last month'], ['30', 'Last 30 days'], ['fy', 'This financial year'], ['all', 'All time']];
   const entries = Object.entries(s.byCat).filter(e => e[1] > 0).sort((x, y) => y[1] - x[1]);
   const dTotal = entries.reduce((n, e) => n + e[1], 0);
+  const refunds = Object.values(s.byCat).filter(v => v < 0).reduce((n, v) => n + v, 0);
   const peak = Math.max(s.income, s.expenses, 1);
   let chart = null, legend = null;
   if (entries.length) {
-    chart = donut(entries, dTotal);
+    chart = donut(entries, dTotal, dTotal + refunds);
     legend = h('div', { class: 'legend' }, entries.map(([c, v], i) => {
       const row = h('div', { class: 'row' }, h('span', { class: 'sw', style: `background:${PAL[i % PAL.length]}` }), h('span', {}, c), h('span', { class: 'pc' }, Math.round(v / dTotal * 100) + '%'), h('span', { class: 'am' }, money(v)));
       row.addEventListener('mouseenter', () => chart.show(i)); row.addEventListener('mouseleave', () => chart.clear());
       return row;
-    }));
+    }).concat(refunds < 0 ? [h('div', { class: 'row' }, h('span', { class: 'sw', style: 'background:var(--line)' }), h('span', {}, 'Refunds and reversals'), h('span', { class: 'pc' }), h('span', { class: 'am' }, money(refunds)))] : []));
     chart.el.querySelectorAll('.ds').forEach((seg, i) => { seg.style.pointerEvents = 'stroke'; seg.addEventListener('mouseenter', () => chart.show(i)); seg.addEventListener('mouseleave', () => chart.clear()); });
   }
   return h('div', {},
