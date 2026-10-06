@@ -2,6 +2,8 @@
 
 A private savings goal tracker in a single HTML file. Set a goal, bring in your bank transactions, approve each one by hand, and see how much you need to save and how much you have spent.
 
+> **Disclaimer:** Goal Tracker records and calculates the figures you give it. It is not financial advice, and it is provided as is, without warranty. Check its numbers against your bank statements, and keep an encrypted backup. A forgotten passcode cannot be recovered.
+
 ## Use it
 
 1. Download `goal-tracker.html` and save it somewhere permanent.
@@ -32,3 +34,7 @@ Keyboard shortcuts on the Approve screen: A approves, R rejects, S skips.
 - Live bank sync (Australian Open Banking through an accredited provider).
 - Recurring bill detection and a daily "safe to spend" figure.
 - Multiple goals.
+
+## Licence
+
+MIT. See `LICENSE`.
