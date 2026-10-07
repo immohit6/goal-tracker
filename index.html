@@ -615,6 +615,27 @@ function safeCard(s) {
   return h('div', { class: 'sec' }, h('h2', {}, 'Safe to spend today'), body);
 }
 
+let incPeriod = 'month';
+// Expected income (the shifts you ticked) beside actual income (approved transactions) for the same period.
+function incomeCard() {
+  const today = iso(new Date()), now = new Date();
+  const [from, to] = incPeriod === 'week' ? (d => [d[0], d[6]])(weekDates(0)) : [iso(new Date(now.getFullYear(), now.getMonth(), 1)), iso(new Date(now.getFullYear(), now.getMonth() + 1, 0))];
+  const exp = workTotals(from, to), worked = workTotals(from, to < today ? to : today);
+  const actual = summarise(approved().filter(t => t.scope === 'personal' && t.date >= from && t.date <= to)).income;
+  const expected = exp.net, peak = Math.max(1, expected, actual);
+  const bar = (label, val, colour) => h('div', { class: 'flowrow', style: 'margin:12px 0;grid-template-columns:78px 1fr auto' }, h('span', { class: 'mute small' }, label),
+    h('div', { class: 'bar2', style: 'height:16px;border-radius:8px' }, h('div', { 'data-w': String(val / peak * 100), style: `width:0;background:${colour};transition:width .8s cubic-bezier(.2,.8,.2,1)` })), h('b', { class: 'small' }, money(val)));
+  const gap = worked.net - actual;
+  const msg = exp.n === 0 ? 'Tick the shifts you work in the Shifts tab to see what to expect.'
+    : gap > 0.5 ? `${money(gap)} of the pay for shifts you have already worked has not shown up yet.` : gap < -0.5 ? `Your actual income is ${money(-gap)} above the shifts worked so far.` : 'Your actual income matches the shifts worked so far.';
+  return h('div', { class: 'sec' }, h('h2', {}, 'Income'),
+    pills([['month', 'This month'], ['week', 'This week']], incPeriod, v => { incPeriod = v; render(); }),
+    bar('Expected', expected, 'var(--cobalt)'), bar('Actual', actual, 'var(--mint)'),
+    h('p', { class: gap > 0.5 && exp.n ? 'amber small' : 'mute small' }, msg),
+    h('p', { class: 'mute small', style: 'margin-top:4px' }, 'Expected comes from your ticked shifts. Actual is approved personal income. Pay usually lands after the shift, so Actual trails Expected.'),
+    h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
+}
+
 function goalView() {
   const g = db.goal;
   if (!g || editGoal) return goalForm(g);
@@ -640,6 +661,7 @@ function goalView() {
       h('div', { class: 'verdict' }, verdict),
       h('div', { class: 'name', style: 'margin-top:6px;font-size:13px' }, `Counts approved personal income and spending dated ${niceDate(g.start)} or later.`),
       h('div', { class: 'herofoot' }, h('span', { class: 'hp' }, `${Math.round(s.pct)}% saved`), h('span', { class: 'hp' }, `Due ${niceDate(g.deadline)}`), !s.done && !s.overdue && h('span', { class: 'hp' }, `${s.daysLeft} days left`))),
+    incomeCard(),
     safeCard(s),
     !s.done && h('div', { class: 'sec' }, h('h2', {}, 'Savings you need'),
       s.overdue ? h('p', { class: 'amber', style: 'margin-top:6px' }, 'The deadline has passed. Edit the goal to set a new date.')
@@ -1047,7 +1069,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, day strip layout. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, income bars. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }

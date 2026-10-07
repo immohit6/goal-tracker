@@ -20,6 +20,7 @@ Your data stays in that browser on that device. A different browser, a private t
 - **Approve:** imported transactions wait in a queue. You approve, reject or skip each one and set its category and whether it is personal or business. Only approved items reach the report.
 - **Add:** type in income and expenses, or import a bank CSV (CBA-style export with no header row, or any CSV with date, description and amount or debit and credit columns). Duplicates are skipped.
 - **Shifts:** a week at a time. Pick a day from the strip at the top, then tap the shifts you work that day (Narracan AM or PM, Menorock AM 7.5h, AM 5.5h or PM, Uber). The expected amount shows on the shift and in a running weekly total, and you can type a different amount for a slow or busy day. Copy last week repeats the previous week in one tap, and Quick fill ticks many days at once. Narracan and Menorock start with their own rates, allowances and shift lengths, and Uber starts at $150 a day; change any of them under Workplaces. Public holiday rates, overtime and super are not included.
+- **Income bars:** the Goal screen shows two bars for this week or this month: Expected (from the shifts you ticked) and Actual (approved personal income). Pay usually lands after the shift, so Actual trails Expected.
 - **Report:** expenses, income and net by period, filtered to personal, business or both, with a spending breakdown.
 
 Keyboard shortcuts on the Approve screen: A approves, R rejects, S skips.
