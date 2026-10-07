@@ -173,6 +173,7 @@ input:focus,select:focus{border-color:var(--cobalt)}
 .day{aspect-ratio:1/1.25;border:1px solid var(--line);border-radius:10px;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:5px 1px 4px;font-size:13px;min-width:0;color:var(--ink)}
 .day.has{border-color:var(--cobalt);background:color-mix(in srgb,var(--cobalt) 10%,var(--surface))}
 .day.today b{text-decoration:underline}
+.day.sel{outline:2px solid var(--ink);outline-offset:1px}
 .day.blank{border:0;background:transparent;pointer-events:none}
 .day small{font-size:9.5px;color:var(--mint);font-weight:650;line-height:1}
 .dots{display:flex;gap:2px;height:6px}.dots i{width:6px;height:6px;border-radius:50%;display:block}
@@ -789,7 +790,7 @@ function reportView() {
 }
 
 // ---------- shifts and expected income ----------
-let shiftMonth = 0, brush = null, brushType = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
+let selDay = null, shiftMonth = 0, brush = null, brushType = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
 const PCOL = ['var(--cobalt)', 'var(--mint)', 'var(--amber)', 'var(--coral)'];
 const mkType = (name, o) => Object.assign({ name, rate: 0, sat: 0, sun: 0, hours: 8 }, o || {});
 function ensureWork() {
@@ -814,6 +815,8 @@ function shiftPay(p, date, typeName) {
   if (wd === 6 && src.sat > 0) r = src.sat; if (wd === 0 && src.sun > 0) r = src.sun;
   return Math.max(r * (src.hours || 0), p.min || 0);
 }
+// What you expect for one marked shift. A typed amount for that day replaces the calculated one.
+function entryPay(w, d, key, p, t) { const o = w.amt && w.amt[d + '#' + key]; return o != null ? o : shiftPay(p, d, t); }
 const entryLabel = (p, t) => t ? `${p.name} ${t}` : p.name;
 function workTotals(from, to) {
   const w = ensureWork(), per = {}, unset = new Set(); let n = 0, gross = 0, net = 0;
@@ -821,8 +824,8 @@ function workTotals(from, to) {
     if (d < from || d > to) continue;
     for (const key of w.shifts[d]) {
       const [id, t] = ekParse(key), p = w.places.find(x => x.id === id); if (!p) continue;
-      const g = shiftPay(p, d, t); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
-      if (g === 0) unset.add(entryLabel(p, typeOf(p, t) ? typeOf(p, t).name : null));
+      const g = entryPay(w, d, key, p, t); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
+      if (g === 0 && !(w.amt && w.amt[d + '#' + key] != null)) unset.add(entryLabel(p, typeOf(p, t) ? typeOf(p, t).name : null));
       const o = per[id] || (per[id] = { n: 0, gross: 0 }); o.n++; o.gross += g;
     }
   }
@@ -844,10 +847,35 @@ async function fillShifts(dates) {
 }
 async function toggleShift(date) {
   const w = ensureWork(); if (!brush) return flash('Add a workplace first.');
-  const key = curKey(), a = w.shifts[date] || (w.shifts[date] = []), i = a.indexOf(key);
-  if (i >= 0) a.splice(i, 1); else a.push(key);
-  if (!a.length) delete w.shifts[date];
+  const key = curKey(), a = w.shifts[date] || (w.shifts[date] = []);
+  if (!a.includes(key)) a.push(key);
+  selDay = date; // a marked day opens its amount box below the calendar
   const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
+}
+async function removeEntry(date, key) {
+  const w = ensureWork(), a = w.shifts[date] || [], i = a.indexOf(key); if (i >= 0) a.splice(i, 1);
+  if (!a.length) { delete w.shifts[date]; selDay = null; }
+  if (w.amt) delete w.amt[date + '#' + key];
+  const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
+}
+function dayEditor() {
+  const w = ensureWork(), keys = selDay && w.shifts[selDay]; if (!keys || !keys.length) return null;
+  const rows = keys.map(k => {
+    const [id, t] = ekParse(k), p = w.places.find(x => x.id === id); if (!p) return null;
+    const def = shiftPay(p, selDay, t), cur = entryPay(w, selDay, k, p, t), changed = cur !== def;
+    const inp = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: String(Math.round(cur * 100) / 100), 'aria-label': 'Income for ' + entryLabel(p, t) });
+    inp.addEventListener('change', async () => {
+      const v = parseFloat(inp.value); if (isNaN(v) || v < 0) return flash('Enter an amount.');
+      w.amt = w.amt || {}; if (Math.abs(v - def) < 0.005) delete w.amt[selDay + '#' + k]; else w.amt[selDay + '#' + k] = v;
+      const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
+    });
+    return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' },
+      h('div', { style: 'display:flex;justify-content:space-between;gap:10px' }, h('b', {}, entryLabel(p, t)), h('span', { class: 'mute small' }, changed ? `Usual ${money(def)}` : 'Usual amount')),
+      h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:8px' }, h('span', { class: 'mute' }, '$'), h('div', { style: 'flex:1;min-width:0' }, inp),
+        h('button', { class: 'btn', style: 'height:44px;padding:0 14px', onclick: () => removeEntry(selDay, k) }, 'Remove')));
+  });
+  return h('div', { class: 'panel', style: 'margin-top:14px' }, h('h2', {}, niceDate(selDay)), h('p', { class: 'mute small' }, 'Change the amount if you earn more or less this day.'), rows,
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: () => { selDay = null; render(); } }, 'Done')));
 }
 function placeSummary(p) {
   if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + (p.tax > 0 ? ` · ${p.tax}% tax` : '');
@@ -912,9 +940,9 @@ function shiftsView() {
   for (let i = 0; i < (base.getDay() + 6) % 7; i++) cells.push(h('div', { class: 'day blank' }));
   dates.forEach(d => {
     const keys = w.shifts[d] || [];
-    const pay = keys.reduce((n, k) => { const [id, t] = ekParse(k), p = w.places.find(x => x.id === id); return n + (p ? shiftPay(p, d, t) : 0); }, 0);
+    const pay = keys.reduce((n, k) => { const [id, t] = ekParse(k), p = w.places.find(x => x.id === id); return n + (p ? entryPay(w, d, k, p, t) : 0); }, 0);
     const dot = k => { const [id, t] = ekParse(k), p = w.places.find(x => x.id === id), c = PCOL[Math.max(0, idx(id)) % 4], pm = p && p.types.length > 1 && t === p.types[1].name; return h('i', { style: pm ? `border:2px solid ${c}` : `background:${c}` }); };
-    cells.push(h('button', { class: 'day' + (keys.length ? ' has' : '') + (d === todayIso ? ' today' : ''), 'aria-pressed': keys.length ? 'true' : 'false', 'aria-label': niceDate(d) + (keys.length ? ', shift marked' : ''), onclick: () => toggleShift(d) },
+    cells.push(h('button', { class: 'day' + (keys.length ? ' has' : '') + (d === todayIso ? ' today' : '') + (d === selDay ? ' sel' : ''), 'aria-pressed': keys.length ? 'true' : 'false', 'aria-label': niceDate(d) + (keys.length ? ', shift marked' : ''), onclick: () => toggleShift(d) },
       h('b', { style: 'font-weight:500' }, String(+d.slice(8))), h('div', { class: 'dots' }, keys.map(dot)), h('small', {}, pay > 0 ? '$' + Math.round(pay) : '')));
   });
   const peak = Math.max(1, ...Object.values(tot.per).map(o => o.gross));
@@ -935,7 +963,8 @@ function shiftsView() {
       h('b', {}, base.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })),
       h('button', { 'aria-label': 'Next month', onclick: () => { shiftMonth++; render(); } }, '›')),
     h('div', { class: 'cal' }, cells),
-    h('p', { class: 'mute small', style: 'margin-top:8px' }, 'Solid dot: first shift type (AM). Ring: second (PM). Tap a day again to remove that shift.'),
+    h('p', { class: 'mute small', style: 'margin-top:8px' }, 'Solid dot: first shift type (AM). Ring: second (PM). Tap a marked day to change its amount or remove it.'),
+    dayEditor(),
     h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'Expected this month'),
       h('div', { class: 'strip' },
         h('div', { class: 'cell' }, h('b', {}, String(tot.n)), h('span', {}, tot.n === 1 ? 'shift' : 'shifts')),
@@ -945,8 +974,8 @@ function shiftsView() {
         h('div', { class: 'bar2' }, h('div', { style: `width:${tot.per[p.id].gross / peak * 100}%;background:${PCOL[idx(p.id) % 4]}` })), h('span', { class: 'small' }, money(tot.per[p.id].gross)))),
       h('div', { class: 'wk', style: 'margin-top:14px' }, h('span', { class: 'mute' }, 'This week (Mon to Sun)'), h('b', {}, `${money(wkTot.gross)} · ${wkTot.n} shift${wkTot.n === 1 ? '' : 's'}`)),
       h('p', { class: 'mute small' }, 'These are estimates from the rates you entered. Penalty rates for public holidays, overtime and super are not included.'),
-      tot.n > 0 && h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => { if (!confirm('Clear every marked shift in ' + base.toLocaleDateString('en-AU', { month: 'long' }) + '?')) return; dates.forEach(d => delete w.shifts[d]); await save(); render(); } }, 'Clear this month'))),
-    h('div', { class: 'panel' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have AM and PM rates. Uber starts with a $150 minimum per day. Add a workplace if another job pays differently.'),
+      tot.n > 0 && h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => { if (!confirm('Clear every marked shift in ' + base.toLocaleDateString('en-AU', { month: 'long' }) + '?')) return; dates.forEach(d => { delete w.shifts[d]; }); if (w.amt) Object.keys(w.amt).forEach(k => { if (k.slice(0, 10) >= dates[0] && k.slice(0, 10) <= dates[dim - 1]) delete w.amt[k]; }); selDay = null; await save(); render(); } }, 'Clear this month'))),
+    h('div', { class: 'panel' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have AM and PM rates. Uber starts at $150 a day, and you can change any single day. Add a workplace if another job pays differently.'),
       w.places.map((p, i) => placePanel(p, i)),
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
 }
