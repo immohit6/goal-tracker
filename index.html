@@ -819,6 +819,15 @@ function ensureWork() {
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => !(t.rate > 0))) p.types.forEach(t => { t.rate = 50; }); });
   // Menorock weekends use the same loadings as Narracan on its $40 base: Sat x1.5 = $60, Sun x2.0 = $80 (no casual loading on top).
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => t.rate === 50 && !(t.sat > 0) && !(t.sun > 0))) p.types.forEach(t => { t.sat = 60; t.sun = 80; }); });
+  // Menorock shifts from the user's note: two morning shifts (7.5h and 5.5h) and an occasional PM (3pm to 9pm less a 30 minute break = 5.5h).
+  db.work.places.forEach(p => {
+    if (p.name !== 'Menorock' || p.types.length !== 2 || p.types[0].name !== 'AM' || p.types[1].name !== 'PM' || p.types.some(t => t.hours !== 8)) return;
+    const r = { rate: p.types[0].rate, sat: p.types[0].sat, sun: p.types[0].sun };
+    p.types = [mkType('AM 7.5h', Object.assign({ hours: 7.5 }, r)), mkType('AM 5.5h', Object.assign({ hours: 5.5 }, r)), mkType('PM', Object.assign({ hours: 5.5 }, r))];
+    const w = db.work, map = k => k === p.id + '|AM' ? p.id + '|AM 7.5h' : k;
+    for (const d in w.shifts) w.shifts[d] = w.shifts[d].map(map);
+    if (w.amt) for (const k of Object.keys(w.amt)) { const [d, key] = [k.slice(0, k.indexOf('#')), k.slice(k.indexOf('#') + 1)]; if (key === p.id + '|AM') { w.amt[d + '#' + p.id + '|AM 7.5h'] = w.amt[k]; delete w.amt[k]; } }
+  });
   if (!db.work.places.some(p => p.id === brush)) { brush = db.work.places.length ? db.work.places[0].id : null; brushType = null; }
   const bp = db.work.places.find(p => p.id === brush);
   if (bp && bp.types.length && !bp.types.some(t => t.name === brushType)) brushType = bp.types[0].name;
@@ -1024,7 +1033,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, Narracan and Menorock rates. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, Menorock shifts. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
