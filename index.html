@@ -800,13 +800,21 @@ function reportView() {
 let shiftRange = 'week', weekOff = 0, shiftMonth = 0, brush = null, brushType = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
 const PCOL = ['var(--cobalt)', 'var(--mint)', 'var(--amber)', 'var(--coral)'];
 const mkType = (name, o) => Object.assign({ name, rate: 0, sat: 0, sun: 0, hours: 8 }, o || {});
+// Narracan pay from the user's note: base $45/h, casual x1.25 on weekdays, Sat x1.5 and Sun x2.0 (no casual loading on top),
+// team leader +$4/h on every shift, laundry +$5/shift, AM 7.25h and PM 6.75h.
+function narracanDefaults(p) {
+  const r = { rate: 56.25, sat: 67.5, sun: 90 };
+  p.types = [mkType('AM', Object.assign({ hours: 7.25 }, r)), mkType('PM', Object.assign({ hours: 6.75 }, r))];
+  p.extraHr = 4; p.extraShift = 5; return p;
+}
 function ensureWork() {
   if (!db.work) db.work = { places: [
-    { id: uid(), name: 'Narracan', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] },
+    narracanDefaults({ id: uid(), name: 'Narracan', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] }),
     { id: uid(), name: 'Menorock', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] },
     { id: uid(), name: 'Uber', rate: 0, sat: 0, sun: 0, hours: 0, min: 150, tax: 0, types: [] }], shifts: {} };
   // Older data: hourly workplaces get AM and PM shift types that keep the rates already entered.
   db.work.places.forEach(p => { if (!p.types) p.types = p.min > 0 && !(p.rate > 0) ? [] : [mkType('AM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 }), mkType('PM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 })]; });
+  db.work.places.forEach(p => { if (p.name === 'Narracan' && p.extraHr === undefined && p.types.length === 2 && p.types.every(t => !(t.rate > 0))) narracanDefaults(p); else if (p.extraHr === undefined) { p.extraHr = 0; p.extraShift = 0; } });
   if (!db.work.places.some(p => p.id === brush)) { brush = db.work.places.length ? db.work.places[0].id : null; brushType = null; }
   const bp = db.work.places.find(p => p.id === brush);
   if (bp && bp.types.length && !bp.types.some(t => t.name === brushType)) brushType = bp.types[0].name;
@@ -820,7 +828,7 @@ const typeOf = (p, name) => p.types && p.types.length ? (p.types.find(t => t.nam
 function shiftPay(p, date, typeName) {
   const src = typeOf(p, typeName) || p, wd = isoToDate(date).getDay(); let r = src.rate || 0;
   if (wd === 6 && src.sat > 0) r = src.sat; if (wd === 0 && src.sun > 0) r = src.sun;
-  return Math.max(r * (src.hours || 0), p.min || 0);
+  return Math.max((r + (p.extraHr || 0)) * (src.hours || 0) + (p.extraShift || 0), p.min || 0);
 }
 // What you expect for one marked shift. A typed amount for that day replaces the calculated one.
 function entryPay(w, d, key, p, t) { const o = w.amt && w.amt[d + '#' + key]; return o != null ? o : shiftPay(p, d, t); }
@@ -872,7 +880,8 @@ function amountLine(w, date, o) {
     h('span', { class: 'mute' }, '$'), h('div', { style: 'width:104px' }, inp));
 }
 function placeSummary(p) {
-  if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + (p.tax > 0 ? ` · ${p.tax}% tax` : '');
+  const ex = (p.extraHr > 0 ? ` · +${money(p.extraHr)}/h` : '') + (p.extraShift > 0 ? ` · +${money(p.extraShift)}/shift` : '');
+  if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + ex + (p.tax > 0 ? ` · ${p.tax}% tax` : '');
   return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + (p.tax > 0 ? `, ${p.tax}% tax` : '');
 }
 const numIn = (v, ph) => h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: v || '', placeholder: ph || '0' });
@@ -886,7 +895,7 @@ function placePanel(p, idx) {
     h('button', { class: 'btn', style: 'height:38px;padding:0 14px', onclick: () => { editPlace = editPlace === p.id ? null : p.id; render(); } }, editPlace === p.id ? 'Close' : 'Edit'));
   const wrap = kids => h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head, kids);
   if (editPlace !== p.id) return wrap(null);
-  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax);
+  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax), exH = numIn(p.extraHr), exS = numIn(p.extraShift);
   let typeForms;
   if (p.types.length) {
     typeForms = p.types.map(t => {
@@ -900,13 +909,14 @@ function placePanel(p, idx) {
     p._f = f; typeForms = [field('Hourly rate, weekday (leave empty for a flat minimum)', f.rate), field('Saturday rate (optional)', f.sat), field('Sunday rate (optional)', f.sun), field('Paid hours per shift', f.hours)];
   }
   return wrap(h('div', { style: 'margin-top:14px' }, field('Name', nm), typeForms,
+    field('Extra per hour on every hour, e.g. team leader allowance (optional)', exH), field('Extra per shift, e.g. laundry (optional)', exS),
     field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
     h('div', { class: 'btns' },
       h('button', { class: 'btn primary', onclick: async () => {
         if (!nm.value.trim()) return flash('Give the workplace a name.');
         if (p.types.length) p.types.forEach(t => { Object.assign(t, { rate: nv(t._f.rate), sat: nv(t._f.sat), sun: nv(t._f.sun), hours: nv(t._f.hours) }); delete t._f; });
         else { Object.assign(p, { rate: nv(p._f.rate), sat: nv(p._f.sat), sun: nv(p._f.sun), hours: nv(p._f.hours) }); delete p._f; }
-        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)) });
+        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)), extraHr: nv(exH), extraShift: nv(exS) });
         editPlace = null; await save(); flash('Saved.'); render();
       } }, 'Save'),
       p.types.length
@@ -1010,7 +1020,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, shifts checklist. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, Narracan rates. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
