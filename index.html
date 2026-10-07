@@ -817,6 +817,8 @@ function ensureWork() {
   db.work.places.forEach(p => { if (p.name === 'Narracan' && p.extraHr === undefined && p.types.length === 2 && p.types.every(t => !(t.rate > 0))) narracanDefaults(p); else if (p.extraHr === undefined) { p.extraHr = 0; p.extraShift = 0; } });
   // Menorock from the user's note: base $40/h with the casual x1.25 = $50/h. Weekend rates, shift hours and allowances were not given yet.
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => !(t.rate > 0))) p.types.forEach(t => { t.rate = 50; }); });
+  // Menorock weekends use the same loadings as Narracan on its $40 base: Sat x1.5 = $60, Sun x2.0 = $80 (no casual loading on top).
+  db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => t.rate === 50 && !(t.sat > 0) && !(t.sun > 0))) p.types.forEach(t => { t.sat = 60; t.sun = 80; }); });
   if (!db.work.places.some(p => p.id === brush)) { brush = db.work.places.length ? db.work.places[0].id : null; brushType = null; }
   const bp = db.work.places.find(p => p.id === brush);
   if (bp && bp.types.length && !bp.types.some(t => t.name === brushType)) brushType = bp.types[0].name;
