@@ -815,6 +815,8 @@ function ensureWork() {
   // Older data: hourly workplaces get AM and PM shift types that keep the rates already entered.
   db.work.places.forEach(p => { if (!p.types) p.types = p.min > 0 && !(p.rate > 0) ? [] : [mkType('AM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 }), mkType('PM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 })]; });
   db.work.places.forEach(p => { if (p.name === 'Narracan' && p.extraHr === undefined && p.types.length === 2 && p.types.every(t => !(t.rate > 0))) narracanDefaults(p); else if (p.extraHr === undefined) { p.extraHr = 0; p.extraShift = 0; } });
+  // Menorock from the user's note: base $40/h with the casual x1.25 = $50/h. Weekend rates, shift hours and allowances were not given yet.
+  db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => !(t.rate > 0))) p.types.forEach(t => { t.rate = 50; }); });
   if (!db.work.places.some(p => p.id === brush)) { brush = db.work.places.length ? db.work.places[0].id : null; brushType = null; }
   const bp = db.work.places.find(p => p.id === brush);
   if (bp && bp.types.length && !bp.types.some(t => t.name === brushType)) brushType = bp.types[0].name;
@@ -1020,7 +1022,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, Narracan rates. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, Narracan and Menorock rates. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
