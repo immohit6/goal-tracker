@@ -633,7 +633,7 @@ function incomeCard() {
     bar('Expected', expected, 'var(--cobalt)'), bar('Actual', actual, 'var(--mint)'),
     h('p', { class: gap > 0.5 && exp.n ? 'amber small' : 'mute small' }, msg),
     ensureWork().places.map(payInfo).filter(Boolean).map(i => h('div', { class: 'wk' }, h('div', { style: 'min-width:0' }, h('b', {}, `Next ${i.p.name} pay`), h('div', { class: 'mute small' }, `${niceDate(i.pay)} · ${i.n} shift${i.n === 1 ? '' : 's'} counted`)), h('b', { class: 'mint' }, i.n ? 'about ' + money(i.amount) : '$0.00'))),
-    h('p', { class: 'mute small', style: 'margin-top:4px' }, 'Expected comes from your ticked shifts. Actual is approved personal income. Pay usually lands after the shift, so Actual trails Expected.'),
+    h('p', { class: 'mute small', style: 'margin-top:4px' }, 'Expected comes from your ticked shifts, after tax. Actual is approved personal income. Pay usually lands after the shift, so Actual trails Expected.'),
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
 
@@ -851,6 +851,8 @@ function ensureWork() {
   db.work.places.forEach(p => { if (p.name === 'Narracan' && p.extraHr === undefined && p.types.length === 2 && p.types.every(t => !(t.rate > 0))) narracanDefaults(p); else if (p.extraHr === undefined) { p.extraHr = 0; p.extraShift = 0; } });
   // Menorock from the user's note: base $40/h with the casual x1.25 = $50/h. Weekend rates, shift hours and allowances were not given yet.
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => !(t.rate > 0))) p.types.forEach(t => { t.rate = 50; }); });
+  // Tax: an old flat % stays flat. Otherwise Narracan and Menorock start on the ATO tables (tax-free threshold on Narracan only, change it in Edit) and Uber has no withholding.
+  db.work.places.forEach(p => { if (p.taxMode) return; if (p.tax > 0) p.taxMode = 'flat'; else if (p.name === 'Narracan') { p.taxMode = 'ato'; p.tft = true; } else if (p.name === 'Menorock') { p.taxMode = 'ato'; p.tft = false; } else p.taxMode = 'none'; });
   // Menorock weekends use the same loadings as Narracan on its $40 base: Sat x1.5 = $60, Sun x2.0 = $80 (no casual loading on top).
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => t.rate === 50 && !(t.sat > 0) && !(t.sun > 0))) p.types.forEach(t => { t.sat = 60; t.sun = 80; }); });
   // Menorock shifts from the user's note: two morning shifts (7.5h and 5.5h) and an occasional PM (3pm to 9pm less a 30 minute break = 5.5h).
@@ -880,18 +882,37 @@ function shiftPay(p, date, typeName) {
 // What you expect for one marked shift. A typed amount for that day replaces the calculated one.
 function entryPay(w, d, key, p, t) { const o = w.amt && w.amt[d + '#' + key]; return o != null ? o : shiftPay(p, d, t); }
 const entryLabel = (p, t) => t ? `${p.name} ${t}` : p.name;
+// ---- Tax: ATO PAYG withholding, Schedule 1 weekly coefficients (published 17 Jun 2026, for 2026-27). Medicare levy is included; HELP is not. ----
+const ATO_S1 = [[188, .15, .15], [371, .2084, 11.0185], [515, .179, .1066], [932, .3227, 74.1674], [2246, .32, 71.6508], [3303, .39, 228.8816], [Infinity, .47, 493.1893]];
+const ATO_S2 = [[362, 0, 0], [538, .15, 54.3462], [673, .25, 108.2135], [721, .17, 54.3473], [865, .179, 60.8377], [1282, .3227, 185.1935], [2596, .32, 181.7319], [3653, .39, 363.4627], [Infinity, .47, 655.7704]];
+// Tax to withhold from one WEEK of pay. Cents are ignored and 99c added, then the answer is rounded to the dollar.
+function atoWeekly(gross, tft) {
+  if (!(gross > 0)) return 0;
+  const x = Math.floor(gross) + 0.99, row = (tft ? ATO_S2 : ATO_S1).find(r => x < r[0]);
+  return Math.max(0, Math.round(row[1] * x - row[2]));
+}
+// Tax on `gross` earned over `days` days (7 or 14 for a pay cycle): scale to a weekly figure, look it up, scale back.
+function periodTax(p, gross, days) {
+  const m = p.taxMode || 'none';
+  if (m === 'flat') return gross * (p.tax || 0) / 100;
+  if (m !== 'ato') return 0;
+  return atoWeekly(gross * 7 / days, p.tft) * days / 7;
+}
+const weekStart = d => { const x = isoToDate(d); return iso(addDays(x, -((x.getDay() + 6) % 7))); };
 function workTotals(from, to) {
-  const w = ensureWork(), per = {}, unset = new Set(); let n = 0, gross = 0, net = 0;
+  const w = ensureWork(), per = {}, unset = new Set(), wk = {}; let n = 0, gross = 0, net = 0;
   for (const d in w.shifts) {
     if (d < from || d > to) continue;
     for (const key of w.shifts[d]) {
       const [id, t] = ekParse(key), p = w.places.find(x => x.id === id); if (!p) continue;
-      const g = entryPay(w, d, key, p, t); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
+      const g = entryPay(w, d, key, p, t); n++; gross += g; const wb = wk[id] || (wk[id] = {}), ws = weekStart(d); wb[ws] = (wb[ws] || 0) + g;
       if (g === 0 && !(w.amt && w.amt[d + '#' + key] != null)) unset.add(entryLabel(p, typeOf(p, t) ? typeOf(p, t).name : null));
       const o = per[id] || (per[id] = { n: 0, gross: 0 }); o.n++; o.gross += g;
     }
   }
-  return { n, gross, net, per, unset: [...unset] };
+  // Tax is worked out week by week for each workplace, the way a payslip does it.
+  for (const id in per) { const p = w.places.find(x => x.id === id); let tax = 0; for (const ws in wk[id]) tax += periodTax(p, wk[id][ws], 7); per[id].tax = tax; per[id].net = per[id].gross - tax; net += per[id].net; }
+  return { n, gross, net, tax: gross - net, per, unset: [...unset] };
 }
 const weekDates = off => { const t = addDays(new Date(), off * 7); const mon = addDays(t, -((t.getDay() + 6) % 7)); return [...Array(7)].map((_, i) => iso(addDays(mon, i))); };
 const curKey = () => ek(brush, brushType);
@@ -926,10 +947,11 @@ function amountLine(w, date, o) {
     h('span', { style: `width:9px;height:9px;border-radius:50%;flex:none;background:${PCOL[o.ci % 4]}` }), h('span', { style: 'flex:1;min-width:0' }, o.label, cur !== def && h('span', { class: 'mute small' }, ` (usual ${money(def)})`)),
     h('span', { class: 'mute' }, '$'), h('div', { style: 'width:104px' }, inp));
 }
+const taxNote = p => p.taxMode === 'ato' ? ` · tax: ATO ${p.tft ? 'with' : 'no'} tax-free threshold` : p.taxMode === 'flat' && p.tax > 0 ? ` · ${p.tax}% tax` : '';
 function placeSummary(p) {
   const ex = (p.extraHr > 0 ? ` · +${money(p.extraHr)}/h` : '') + (p.extraShift > 0 ? ` · +${money(p.extraShift)}/shift` : '');
-  if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + ex + (p.tax > 0 ? ` · ${p.tax}% tax` : '');
-  return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + (p.tax > 0 ? `, ${p.tax}% tax` : '');
+  if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + ex + taxNote(p);
+  return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + taxNote(p);
 }
 const numIn = (v, ph) => h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: v || '', placeholder: ph || '0' });
 const nv = e => Math.max(0, parseFloat(e.value) || 0);
@@ -942,7 +964,7 @@ function placePanel(p, idx) {
     h('button', { class: 'btn', style: 'height:38px;padding:0 14px', onclick: () => { editPlace = editPlace === p.id ? null : p.id; render(); } }, editPlace === p.id ? 'Close' : 'Edit'));
   const wrap = kids => h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head, kids);
   if (editPlace !== p.id) return wrap(null);
-  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax), exH = numIn(p.extraHr), exS = numIn(p.extraShift), pe = numIn(p.payEvery), pdIn = h('input', { type: 'date', value: p.payDay || '' }), pl = numIn(p.payLag);
+  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax), tm = h('select', {}, ...[['none', 'None (no tax taken out)'], ['ato', 'ATO tax tables (like a payslip)'], ['flat', 'Flat percentage']].map(([v, l]) => h('option', { value: v, selected: (p.taxMode || 'none') === v }, l))), tf = h('select', {}, h('option', { value: '1', selected: !!p.tft }, 'Yes, claimed here'), h('option', { value: '0', selected: !p.tft }, 'No (second job)')), exH = numIn(p.extraHr), exS = numIn(p.extraShift), pe = numIn(p.payEvery), pdIn = h('input', { type: 'date', value: p.payDay || '' }), pl = numIn(p.payLag);
   let typeForms;
   if (p.types.length) {
     typeForms = p.types.map(t => {
@@ -957,7 +979,8 @@ function placePanel(p, idx) {
   }
   return wrap(h('div', { style: 'margin-top:14px' }, field('Name', nm), typeForms,
     field('Extra per hour on every hour, e.g. team leader allowance (optional)', exH), field('Extra per shift, e.g. laundry (optional)', exS),
-    field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
+    field('Minimum pay per shift (optional)', min), field('How tax is taken out', tm), field('Flat percentage (only for Flat)', tax), field('Tax-free threshold claimed at this job? (ATO tables only)', tf),
+    h('p', { class: 'mute small', style: 'margin:0 0 8px' }, 'ATO tables include Medicare levy but not HELP/HECS. You can claim the tax-free threshold at one job only.'),
     h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'Pay cycle (optional): lets the Goal screen estimate your next pay.'),
     field('Paid every how many days (7 or 14)', pe), field('A payday, past or future', pdIn), field('Days between the last shift in a pay period and payday', pl),
     h('div', { class: 'btns' },
@@ -965,7 +988,7 @@ function placePanel(p, idx) {
         if (!nm.value.trim()) return flash('Give the workplace a name.');
         if (p.types.length) p.types.forEach(t => { Object.assign(t, { rate: nv(t._f.rate), sat: nv(t._f.sat), sun: nv(t._f.sun), hours: nv(t._f.hours) }); delete t._f; });
         else { Object.assign(p, { rate: nv(p._f.rate), sat: nv(p._f.sat), sun: nv(p._f.sun), hours: nv(p._f.hours) }); delete p._f; }
-        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)), extraHr: nv(exH), extraShift: nv(exS), payEvery: nv(pe), payDay: pdIn.value || '', payLag: nv(pl) });
+        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)), taxMode: tm.value, tft: tf.value === '1', extraHr: nv(exH), extraShift: nv(exS), payEvery: nv(pe), payDay: pdIn.value || '', payLag: nv(pl) });
         editPlace = null; await save(); flash('Saved.'); render();
       } }, 'Save'),
       p.types.length
@@ -1017,7 +1040,7 @@ function shiftsView() {
     h('div', { class: 'sec', style: 'margin-bottom:6px' }, h('h2', {}, 'Shifts'),
       h('div', { class: 'monthnav', style: 'margin:6px 0 10px' }, h('button', { 'aria-label': 'Previous week', onclick: () => { weekOff--; render(); } }, '‹'), h('b', {}, weekOff === 0 ? `This week · ${title}` : title), h('button', { 'aria-label': 'Next week', onclick: () => { weekOff++; render(); } }, '›')),
       h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-end;gap:12px' }, h('div', {}, h('div', { class: 'mute small' }, 'Expected this week'), figEl),
-        h('div', { class: 'mute small', style: 'text-align:right' }, `${tot.n} shift${tot.n === 1 ? '' : 's'}`, h('br'), `${sd.toLocaleDateString('en-AU', { month: 'long' })}: ${money(mTot.gross)}`))),
+        h('div', { class: 'mute small', style: 'text-align:right' }, `${tot.n} shift${tot.n === 1 ? '' : 's'}`, h('br'), `${sd.toLocaleDateString('en-AU', { month: 'long' })}: ${money(mTot.gross)}`)), tot.tax > 0.5 && h('div', { class: 'mute small', style: 'margin-top:8px' }, `After tax about ${money(tot.net)} (tax ${money(tot.tax)}). ${sd.toLocaleDateString('en-AU', { month: 'long' })} after tax: ${money(mTot.net)}.`)),
     h('div', { class: 'dchips' }, chips),
     h('div', { style: 'display:flex;justify-content:space-between;margin:0 0 8px' }, h('span', { class: 'mute small' }, sd.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · tap to tick'), h('b', { class: dayPay > 0 ? 'mint' : 'mute' }, dayPay > 0 ? money(dayPay) : '')),
     h('div', { class: 'bigopts' }, tiles),
@@ -1033,7 +1056,7 @@ function shiftsView() {
     h('p', { class: 'mute small', style: 'margin-top:14px' }, 'These are estimates from the rates you entered. Penalty rates for public holidays, overtime and super are not included.'),
     h('div', { class: 'panel', style: 'margin-top:22px' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have their own shift types. Uber starts at $150 a day, and you can change any single day.'),
       w.places.map((p, i) => placePanel(p, i)),
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, taxMode: 'none', tft: false, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
 }
 
 // ---------- regular payments ----------
@@ -1078,14 +1101,14 @@ function reviewView() {
   return h('div', {},
     h('div', { class: 'sec' }, h('h2', {}, 'Weekly review'), h('p', { class: 'mute' }, `The last 7 days, ${niceDate(from)} to ${niceDate(today)}, and what is coming.`)),
     h('div', { class: 'panel' }, h('h2', {}, 'Income'),
-      row('Expected from shifts worked', money(worked.net)), row('Actual income received', money(s.income), s.income >= worked.net - 0.5 ? 'mint' : 'amber'),
+      row('Expected after tax, shifts worked', money(worked.net)), row('Actual income received', money(s.income), s.income >= worked.net - 0.5 ? 'mint' : 'amber'),
       worked.n === 0 && h('p', { class: 'mute small' }, 'No shifts ticked for these days. Tick them in Shifts to compare.')),
     h('div', { class: 'panel' }, h('h2', {}, 'Spending'), row('Spent', money(s.expenses)),
       top.length ? top.map(([c, v]) => row(c, money(v))) : h('p', { class: 'mute small' }, 'No approved spending in these 7 days.')),
     gs && !gs.done && h('div', { class: 'panel' }, h('h2', {}, 'Saving'), row('Saved this week', money(s.net), s.net >= gs.perWeek ? 'mint' : 'amber'), row('Your goal needs', money(gs.perWeek) + ' a week'),
       h('p', { class: s.net >= gs.perWeek ? 'mint small' : 'amber small' }, s.net >= gs.perWeek ? 'On track this week.' : `${money(gs.perWeek - s.net)} short of what the goal needs this week.`)),
     h('div', { class: 'panel' }, h('h2', {}, 'Next week'),
-      next.n ? h('div', {}, row('Shifts planned', String(next.n)), row('Expected income', money(next.net), 'mint')) : h('p', { class: 'amber' }, 'No shifts planned for next week yet.'),
+      next.n ? h('div', {}, row('Shifts planned', String(next.n)), row('Expected after tax', money(next.net), 'mint')) : h('p', { class: 'amber' }, 'No shifts planned for next week yet.'),
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: () => { weekOff = 1; selDate = null; tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan next week'))),
     h('div', { class: 'panel' }, h('h2', {}, 'Bills due in the next 7 days'),
       soon.length ? soon.map(r => row(`${r.label} · ${niceDate(r.next)}`, money(r.amount))) : h('p', { class: 'mute small' }, 'None spotted.')),
@@ -1099,7 +1122,7 @@ function payInfo(p) {
   const today = isoToDate(iso(new Date())), step = p.payEvery; let pay = isoToDate(p.payDay);
   const n = Math.ceil((today - pay) / (86400000 * step)); if (n > 0) pay = addDays(pay, n * step);
   const end = addDays(pay, -(p.payLag || 0)), start = addDays(end, -(step - 1)), t = workTotals(iso(start), iso(end)), o = t.per[p.id] || { n: 0, gross: 0 };
-  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, amount: o.gross * (1 - (p.tax || 0) / 100) };
+  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, gross: o.gross, amount: o.gross - periodTax(p, o.gross, step === 14 ? 14 : 7) };
 }
 
 // ---------- 9am reminder ----------
@@ -1161,7 +1184,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, review and bills. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, after-tax pay. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
