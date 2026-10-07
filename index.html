@@ -789,51 +789,72 @@ function reportView() {
 }
 
 // ---------- shifts and expected income ----------
-let shiftMonth = 0, brush = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
+let shiftMonth = 0, brush = null, brushType = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
 const PCOL = ['var(--cobalt)', 'var(--mint)', 'var(--amber)', 'var(--coral)'];
+const mkType = (name, o) => Object.assign({ name, rate: 0, sat: 0, sun: 0, hours: 8 }, o || {});
 function ensureWork() {
   if (!db.work) db.work = { places: [
-    { id: uid(), name: 'Narracan', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 },
-    { id: uid(), name: 'Menorock', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 },
-    { id: uid(), name: 'Uber', rate: 0, sat: 0, sun: 0, hours: 0, min: 150, tax: 0 }], shifts: {} };
-  if (!db.work.places.some(p => p.id === brush)) brush = db.work.places.length ? db.work.places[0].id : null;
+    { id: uid(), name: 'Narracan', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] },
+    { id: uid(), name: 'Menorock', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] },
+    { id: uid(), name: 'Uber', rate: 0, sat: 0, sun: 0, hours: 0, min: 150, tax: 0, types: [] }], shifts: {} };
+  // Older data: hourly workplaces get AM and PM shift types that keep the rates already entered.
+  db.work.places.forEach(p => { if (!p.types) p.types = p.min > 0 && !(p.rate > 0) ? [] : [mkType('AM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 }), mkType('PM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 })]; });
+  if (!db.work.places.some(p => p.id === brush)) { brush = db.work.places.length ? db.work.places[0].id : null; brushType = null; }
+  const bp = db.work.places.find(p => p.id === brush);
+  if (bp && bp.types.length && !bp.types.some(t => t.name === brushType)) brushType = bp.types[0].name;
+  if (bp && !bp.types.length) brushType = null;
   return db.work;
 }
-// Pay for one shift: the rate for that weekday times paid hours, but never less than the place's minimum.
-function shiftPay(p, date) {
-  const wd = isoToDate(date).getDay(); let r = p.rate || 0;
-  if (wd === 6 && p.sat > 0) r = p.sat; if (wd === 0 && p.sun > 0) r = p.sun;
-  return Math.max(r * (p.hours || 0), p.min || 0);
+const ek = (id, t) => t ? id + '|' + t : id;
+const ekParse = k => { const i = k.indexOf('|'); return i < 0 ? [k, null] : [k.slice(0, i), k.slice(i + 1)]; };
+const typeOf = (p, name) => p.types && p.types.length ? (p.types.find(t => t.name === name) || p.types[0]) : null;
+// Pay for one shift: the rate for that weekday times paid hours, but never less than the workplace minimum.
+function shiftPay(p, date, typeName) {
+  const src = typeOf(p, typeName) || p, wd = isoToDate(date).getDay(); let r = src.rate || 0;
+  if (wd === 6 && src.sat > 0) r = src.sat; if (wd === 0 && src.sun > 0) r = src.sun;
+  return Math.max(r * (src.hours || 0), p.min || 0);
 }
+const entryLabel = (p, t) => t ? `${p.name} ${t}` : p.name;
 function workTotals(from, to) {
-  const w = ensureWork(), per = {}; let n = 0, gross = 0, net = 0;
+  const w = ensureWork(), per = {}, unset = new Set(); let n = 0, gross = 0, net = 0;
   for (const d in w.shifts) {
     if (d < from || d > to) continue;
-    for (const id of w.shifts[d]) {
-      const p = w.places.find(x => x.id === id); if (!p) continue;
-      const g = shiftPay(p, d); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
+    for (const key of w.shifts[d]) {
+      const [id, t] = ekParse(key), p = w.places.find(x => x.id === id); if (!p) continue;
+      const g = shiftPay(p, d, t); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
+      if (g === 0) unset.add(entryLabel(p, typeOf(p, t) ? typeOf(p, t).name : null));
       const o = per[id] || (per[id] = { n: 0, gross: 0 }); o.n++; o.gross += g;
     }
   }
-  return { n, gross, net, per };
+  return { n, gross, net, per, unset: [...unset] };
 }
 const weekDates = off => { const t = addDays(new Date(), off * 7); const mon = addDays(t, -((t.getDay() + 6) % 7)); return [...Array(7)].map((_, i) => iso(addDays(mon, i))); };
+const curKey = () => ek(brush, brushType);
 async function fillShifts(dates) {
   const w = ensureWork(); if (!brush) return flash('Add a workplace first.');
   if (!fillDays.size) return flash('Pick at least one weekday.');
-  let added = 0;
-  for (const d of dates) { if (!fillDays.has(isoToDate(d).getDay())) continue; const a = w.shifts[d] || (w.shifts[d] = []); if (!a.includes(brush)) { a.push(brush); added++; } }
+  const key = curKey(); let added = 0;
+  for (const d of dates) {
+    if (!fillDays.has(isoToDate(d).getDay())) continue;
+    const a = w.shifts[d] || (w.shifts[d] = []);
+    // One shift per workplace per day: AM and PM replace each other (a double needs both, so allow both only by tapping each).
+    if (!a.includes(key)) { a.push(key); added++; }
+  }
   const y = window.scrollY; await save(); flash(added ? `Marked ${added} shift${added === 1 ? '' : 's'}.` : 'Those days were already marked.'); render(); window.scrollTo(0, y);
 }
 async function toggleShift(date) {
   const w = ensureWork(); if (!brush) return flash('Add a workplace first.');
-  const a = w.shifts[date] || (w.shifts[date] = []); const i = a.indexOf(brush);
-  if (i >= 0) a.splice(i, 1); else a.push(brush);
+  const key = curKey(), a = w.shifts[date] || (w.shifts[date] = []), i = a.indexOf(key);
+  if (i >= 0) a.splice(i, 1); else a.push(key);
   if (!a.length) delete w.shifts[date];
   const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
 }
-function placeSummary(p) { return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + (p.tax > 0 ? `, ${p.tax}% tax` : ''); }
+function placeSummary(p) {
+  if (p.types.length) return p.types.map(t => `${t.name} ${money(t.rate || 0)}/h × ${t.hours || 0}h`).join(' · ') + (p.tax > 0 ? ` · ${p.tax}% tax` : '');
+  return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + (p.tax > 0 ? `, ${p.tax}% tax` : '');
+}
 const numIn = (v, ph) => h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: v || '', placeholder: ph || '0' });
+const nv = e => Math.max(0, parseFloat(e.value) || 0);
 
 function placePanel(p, idx) {
   const w = ensureWork();
@@ -841,24 +862,39 @@ function placePanel(p, idx) {
     h('i', { style: `width:10px;height:10px;border-radius:50%;flex:none;background:${PCOL[idx % 4]}` }),
     h('div', { style: 'flex:1;min-width:0' }, h('b', {}, p.name), h('div', { class: 'mute small' }, placeSummary(p))),
     h('button', { class: 'btn', style: 'height:38px;padding:0 14px', onclick: () => { editPlace = editPlace === p.id ? null : p.id; render(); } }, editPlace === p.id ? 'Close' : 'Edit'));
-  if (editPlace !== p.id) return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head);
-  const nm = h('input', { value: p.name, maxlength: '30' }), rate = numIn(p.rate), sat = numIn(p.sat, 'same as weekday'), sun = numIn(p.sun, 'same as weekday'), hrs = numIn(p.hours), min = numIn(p.min), tax = numIn(p.tax);
-  return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head,
-    h('div', { style: 'margin-top:14px' },
-      field('Name', nm), field('Hourly rate, weekday (from your payslip)', rate), field('Saturday rate (optional)', sat), field('Sunday rate (optional)', sun),
-      field('Paid hours per shift', hrs), field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
-      h('div', { class: 'btns' },
-        h('button', { class: 'btn primary', onclick: async () => {
-          if (!nm.value.trim()) return flash('Give the workplace a name.');
-          const n = e => Math.max(0, parseFloat(e.value) || 0);
-          Object.assign(p, { name: nm.value.trim(), rate: n(rate), sat: n(sat), sun: n(sun), hours: n(hrs), min: n(min), tax: Math.min(100, n(tax)) });
-          editPlace = null; await save(); flash('Saved.'); render();
-        } }, 'Save'),
-        h('button', { class: 'btn danger', onclick: async () => {
-          if (!confirm(`Delete ${p.name} and all its marked shifts?`)) return;
-          w.places = w.places.filter(x => x.id !== p.id); for (const d in w.shifts) { w.shifts[d] = w.shifts[d].filter(i => i !== p.id); if (!w.shifts[d].length) delete w.shifts[d]; }
-          editPlace = null; await save(); render();
-        } }, 'Delete'))));
+  const wrap = kids => h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head, kids);
+  if (editPlace !== p.id) return wrap(null);
+  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax);
+  let typeForms;
+  if (p.types.length) {
+    typeForms = p.types.map(t => {
+      const f = { rate: numIn(t.rate), sat: numIn(t.sat, 'same as weekday'), sun: numIn(t.sun, 'same as weekday'), hours: numIn(t.hours) };
+      t._f = f;
+      return h('div', { style: 'border:1px solid var(--line);border-radius:14px;padding:12px 12px 2px;margin-bottom:12px' }, h('b', {}, t.name + ' shift'),
+        h('div', { style: 'height:8px' }), field('Hourly rate, weekday', f.rate), field('Saturday rate (optional)', f.sat), field('Sunday rate (optional)', f.sun), field('Paid hours per shift', f.hours));
+    });
+  } else {
+    const f = { rate: numIn(p.rate), sat: numIn(p.sat, 'same as weekday'), sun: numIn(p.sun, 'same as weekday'), hours: numIn(p.hours) };
+    p._f = f; typeForms = [field('Hourly rate, weekday (leave empty for a flat minimum)', f.rate), field('Saturday rate (optional)', f.sat), field('Sunday rate (optional)', f.sun), field('Paid hours per shift', f.hours)];
+  }
+  return wrap(h('div', { style: 'margin-top:14px' }, field('Name', nm), typeForms,
+    field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
+    h('div', { class: 'btns' },
+      h('button', { class: 'btn primary', onclick: async () => {
+        if (!nm.value.trim()) return flash('Give the workplace a name.');
+        if (p.types.length) p.types.forEach(t => { Object.assign(t, { rate: nv(t._f.rate), sat: nv(t._f.sat), sun: nv(t._f.sun), hours: nv(t._f.hours) }); delete t._f; });
+        else { Object.assign(p, { rate: nv(p._f.rate), sat: nv(p._f.sat), sun: nv(p._f.sun), hours: nv(p._f.hours) }); delete p._f; }
+        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)) });
+        editPlace = null; await save(); flash('Saved.'); render();
+      } }, 'Save'),
+      p.types.length
+        ? h('button', { class: 'btn', onclick: async () => { if (!confirm('Use one rate for every shift here? Marked AM and PM shifts will use the AM rate.')) return; const a = p.types[0]; Object.assign(p, { rate: a.rate, sat: a.sat, sun: a.sun, hours: a.hours }); p.types = []; for (const d in w.shifts) w.shifts[d] = [...new Set(w.shifts[d].map(k => { const [i] = ekParse(k); return i === p.id ? i : k; }))]; brushType = null; editPlace = p.id; await save(); render(); } }, 'Use one rate')
+        : h('button', { class: 'btn', onclick: async () => { p.types = [mkType('AM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 }), mkType('PM', { rate: p.rate, sat: p.sat, sun: p.sun, hours: p.hours || 8 })]; for (const d in w.shifts) w.shifts[d] = w.shifts[d].map(k => k === p.id ? p.id + '|AM' : k); editPlace = p.id; await save(); render(); } }, 'Split into AM and PM'),
+      h('button', { class: 'btn danger', onclick: async () => {
+        if (!confirm(`Delete ${p.name} and all its marked shifts?`)) return;
+        w.places = w.places.filter(x => x.id !== p.id); for (const d in w.shifts) { w.shifts[d] = w.shifts[d].filter(k => ekParse(k)[0] !== p.id); if (!w.shifts[d].length) delete w.shifts[d]; }
+        editPlace = null; await save(); render();
+      } }, 'Delete'))));
 }
 
 function shiftsView() {
@@ -869,35 +905,37 @@ function shiftsView() {
   const tot = workTotals(dates[0], dates[dim - 1]);
   const wk = weekDates(0), wkTot = workTotals(wk[0], wk[6]);
   const idx = id => w.places.findIndex(p => p.id === id);
-  const unset = w.places.filter(p => p.hours > 0 && !(p.rate > 0) && !(p.min > 0) && Object.values(w.shifts).some(a => a.includes(p.id)));
+  const bp = w.places.find(p => p.id === brush);
 
   const cells = [];
   ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach(d => cells.push(h('div', { class: 'dow' }, d)));
   for (let i = 0; i < (base.getDay() + 6) % 7; i++) cells.push(h('div', { class: 'day blank' }));
   dates.forEach(d => {
-    const ids = w.shifts[d] || [], pay = ids.reduce((n, id) => { const p = w.places.find(x => x.id === id); return n + (p ? shiftPay(p, d) : 0); }, 0);
-    cells.push(h('button', { class: 'day' + (ids.length ? ' has' : '') + (d === todayIso ? ' today' : ''), 'aria-pressed': ids.length ? 'true' : 'false', 'aria-label': niceDate(d) + (ids.length ? ', shift marked' : ''), onclick: () => toggleShift(d) },
-      h('b', { style: 'font-weight:500' }, String(+d.slice(8))),
-      h('div', { class: 'dots' }, ids.map(id => h('i', { style: `background:${PCOL[Math.max(0, idx(id)) % 4]}` }))),
-      h('small', {}, pay > 0 ? '$' + Math.round(pay) : '')));
+    const keys = w.shifts[d] || [];
+    const pay = keys.reduce((n, k) => { const [id, t] = ekParse(k), p = w.places.find(x => x.id === id); return n + (p ? shiftPay(p, d, t) : 0); }, 0);
+    const dot = k => { const [id, t] = ekParse(k), p = w.places.find(x => x.id === id), c = PCOL[Math.max(0, idx(id)) % 4], pm = p && p.types.length > 1 && t === p.types[1].name; return h('i', { style: pm ? `border:2px solid ${c}` : `background:${c}` }); };
+    cells.push(h('button', { class: 'day' + (keys.length ? ' has' : '') + (d === todayIso ? ' today' : ''), 'aria-pressed': keys.length ? 'true' : 'false', 'aria-label': niceDate(d) + (keys.length ? ', shift marked' : ''), onclick: () => toggleShift(d) },
+      h('b', { style: 'font-weight:500' }, String(+d.slice(8))), h('div', { class: 'dots' }, keys.map(dot)), h('small', {}, pay > 0 ? '$' + Math.round(pay) : '')));
   });
   const peak = Math.max(1, ...Object.values(tot.per).map(o => o.gross));
   return h('div', {},
     h('div', { class: 'sec' }, h('h2', {}, 'Shifts and expected income'),
-      h('p', { class: 'mute' }, 'Pick a workplace, then tap the days you are working. Each tapped day adds what you expect to earn. Get your rates from your payslip.')),
-    unset.length > 0 && h('div', { class: 'note warn', style: 'margin-bottom:16px' }, h('b', {}, 'Rate needed'), h('p', { class: 'mute small' }, `Add your pay rate for ${unset.map(p => p.name).join(' and ')} (Edit under Workplaces) to see dollar amounts.`)),
-    h('div', { class: 'pills', style: 'margin-bottom:12px' }, w.places.map((p, i) => h('button', { class: 'pill' + (p.id === brush ? ' on' : ''), onclick: () => { brush = p.id; render(); } }, h('span', { style: `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:${PCOL[i % 4]}` }), p.name))),
+      h('p', { class: 'mute' }, 'Pick a workplace and AM or PM, then tap the days you are working. Each tapped day adds what you expect to earn. Get your rates from your payslip.')),
+    tot.unset.length > 0 && h('div', { class: 'note warn', style: 'margin-bottom:16px' }, h('b', {}, 'Rate needed'), h('p', { class: 'mute small' }, `Add your pay rate for ${tot.unset.join(', ')} (Edit under Workplaces) to see dollar amounts.`)),
+    h('div', { class: 'pills', style: 'margin-bottom:10px' }, w.places.map((p, i) => h('button', { class: 'pill' + (p.id === brush ? ' on' : ''), onclick: () => { brush = p.id; brushType = null; render(); } }, h('span', { style: `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:${PCOL[i % 4]}` }), p.name))),
+    bp && bp.types.length > 0 && h('div', { class: 'pills', style: 'margin-bottom:12px' }, bp.types.map((t, i) => h('button', { class: 'pill' + (t.name === brushType ? ' on' : ''), 'aria-pressed': t.name === brushType ? 'true' : 'false', onclick: () => { brushType = t.name; render(); } }, `${t.name} shift`))),
     h('div', { class: 'mute small', style: 'margin:4px 0 6px' }, 'Mark many days at once: choose weekdays, then a range.'),
     h('div', { style: 'display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-bottom:10px' }, [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']].map(([n, l]) => h('button', { style: 'padding:11px 0;min-width:0;font-size:12.5px', class: 'pill' + (fillDays.has(n) ? ' on' : ''), 'aria-pressed': fillDays.has(n) ? 'true' : 'false', onclick: () => { fillDays.has(n) ? fillDays.delete(n) : fillDays.add(n); render(); } }, l))),
     h('div', { class: 'btns' },
-      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(weekDates(0)) }, 'This week'),
-      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(weekDates(1)) }, 'Next week'),
-      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(dates) }, 'Whole month')),
+      h('button', { class: 'btn', style: 'flex:1;padding:0 4px;white-space:nowrap;font-size:14px', onclick: () => fillShifts(weekDates(0)) }, 'This week'),
+      h('button', { class: 'btn', style: 'flex:1;padding:0 4px;white-space:nowrap;font-size:14px', onclick: () => fillShifts(weekDates(1)) }, 'Next week'),
+      h('button', { class: 'btn', style: 'flex:1;padding:0 4px;white-space:nowrap;font-size:14px', onclick: () => fillShifts(dates) }, 'Whole month')),
     h('div', { class: 'monthnav' },
       h('button', { 'aria-label': 'Previous month', onclick: () => { shiftMonth--; render(); } }, '‹'),
       h('b', {}, base.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })),
       h('button', { 'aria-label': 'Next month', onclick: () => { shiftMonth++; render(); } }, '›')),
     h('div', { class: 'cal' }, cells),
+    h('p', { class: 'mute small', style: 'margin-top:8px' }, 'Solid dot: first shift type (AM). Ring: second (PM). Tap a day again to remove that shift.'),
     h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'Expected this month'),
       h('div', { class: 'strip' },
         h('div', { class: 'cell' }, h('b', {}, String(tot.n)), h('span', {}, tot.n === 1 ? 'shift' : 'shifts')),
@@ -908,9 +946,9 @@ function shiftsView() {
       h('div', { class: 'wk', style: 'margin-top:14px' }, h('span', { class: 'mute' }, 'This week (Mon to Sun)'), h('b', {}, `${money(wkTot.gross)} · ${wkTot.n} shift${wkTot.n === 1 ? '' : 's'}`)),
       h('p', { class: 'mute small' }, 'These are estimates from the rates you entered. Penalty rates for public holidays, overtime and super are not included.'),
       tot.n > 0 && h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => { if (!confirm('Clear every marked shift in ' + base.toLocaleDateString('en-AU', { month: 'long' }) + '?')) return; dates.forEach(d => delete w.shifts[d]); await save(); render(); } }, 'Clear this month'))),
-    h('div', { class: 'panel' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Uber starts with a $150 minimum per day. Add a workplace for each shift type if the pay differs.'),
+    h('div', { class: 'panel' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have AM and PM rates. Uber starts with a $150 minimum per day. Add a workplace if another job pays differently.'),
       w.places.map((p, i) => placePanel(p, i)),
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
 }
 
 function settingsView() {
