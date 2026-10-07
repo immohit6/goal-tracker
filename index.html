@@ -165,6 +165,9 @@ input:focus,select:focus{border-color:var(--cobalt)}
 .lockcard .mark{width:54px;height:54px;border-radius:16px;margin-bottom:22px}
 .lockcard h1{font-size:34px;font-weight:600;letter-spacing:-.03em;margin-bottom:8px}
 .err{color:var(--coral);font-size:14px;margin-top:10px;min-height:20px}
+.banner{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:14px;padding:12px 14px;margin-bottom:16px}
+.banner p{margin:2px 0 0}
+.safefig{font-size:clamp(38px,11vw,52px);font-weight:300;letter-spacing:-.03em;line-height:1.1;margin-top:8px}
 .strip>*,.flowrow>*,.legend .row>*,.actions>*,.donutrow>*,.field{min-width:0}
 @media (max-width:430px){
   .strip{grid-template-columns:1fr}
@@ -289,6 +292,26 @@ async function bioUnlock() {
   const pass = dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(r.iv) }, k, fromB64(r.data)));
   await unlock(pass);
 }
+// ---------- backup reminder ----------
+const BK = 'gt_lastbackup_v1', BACKUP_DAYS = 7;
+let bannerHidden = false;
+const lastBackup = () => { try { return parseInt(localStorage.getItem(BK), 10) || 0; } catch (e) { return 0; } };
+function backupAge() { const t = lastBackup(); return t ? Math.floor((Date.now() - t) / 86400000) : null; }
+function needsBackup() { if (!db || (!db.tx.length && !db.goal)) return false; const a = backupAge(); return a === null || a >= BACKUP_DAYS; }
+function backupStatus() { const a = backupAge(); return a === null ? 'You have not made a backup yet.' : a === 0 ? 'Last backup: today.' : `Last backup: ${a} day${a === 1 ? '' : 's'} ago.`; }
+// Called straight from a tap, with nothing awaited first, so the iPhone share sheet is allowed to open.
+async function doBackup() {
+  const text = localStorage.getItem(KEY); if (!text) throw new Error('There is nothing to back up yet.');
+  const name = `goal-tracker-backup-${iso(new Date())}.json`;
+  const file = new File([text], name, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Goal Tracker backup' }); }
+    catch (e) { if (e && e.name === 'AbortError') return false; download(name, text, 'application/json'); }
+  } else download(name, text, 'application/json');
+  try { localStorage.setItem(BK, String(Date.now())); } catch (e) {}
+  return true;
+}
+const backupNow = async () => { try { const ok = await doBackup(); if (ok) flash('Backup saved. Keep the file somewhere safe, such as iCloud Drive.'); } catch (e) { flash((e && e.message) || 'The backup did not work.'); } };
 function askPersist() { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
 function bioPanel() {
   const on = !!bioRecord();
@@ -302,7 +325,7 @@ function bioPanel() {
       catch (e) { flash(e && e.name === 'NotAllowedError' ? 'Face ID was cancelled.' : (e && e.message) || 'Could not turn on Face ID.'); }
     } }, on ? 'Turn off Face ID' : 'Turn on Face ID'));
 }
-function lock() { curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
+function lock() { bannerHidden = false; curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
 let idleT;
 function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
 ['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
@@ -425,13 +448,17 @@ function goalStats() {
   const perDay = remaining / daysLeft;
   const winStart = g.start > iso(addDays(new Date(), -29)) ? g.start : iso(addDays(new Date(), -29));
   const winDays = daysBetween(winStart, today) + 1;
-  const winNet = summarise(approved().filter(t => t.scope === 'personal' && t.date >= winStart && t.date <= today)).net;
+  const win = summarise(approved().filter(t => t.scope === 'personal' && t.date >= winStart && t.date <= today));
+  const winNet = win.net;
   const pace = winNet / winDays;
+  const avgIncome = win.income / winDays;
+  const spentToday = summarise(approved().filter(t => t.scope === 'personal' && t.date === today)).expenses;
+  const budgetDay = avgIncome - perDay;
   const totalDays = daysBetween(g.start, g.deadline);
   const elapsed = Math.min(Math.max(daysBetween(g.start, today), 0), Math.max(totalDays, 0));
   const expected = totalDays > 0 ? g.startSaved + (g.target - g.startSaved) * elapsed / totalDays : g.target;
   return {
-    saved, remaining, daysLeft, overdue, perDay, perWeek: perDay * 7, perMonth: perDay * 30.44, pace, enough: winDays >= 7,
+    saved, remaining, daysLeft, overdue, perDay, perWeek: perDay * 7, perMonth: perDay * 30.44, pace, enough: winDays >= 7, winDays, avgIncome, spentToday, budgetDay, safeToday: budgetDay - spentToday,
     pct: Math.min(100, Math.max(0, saved / g.target * 100)), done: saved >= g.target,
     expected, expPct: Math.min(100, Math.max(0, expected / g.target * 100)), ahead: saved - expected
   };
@@ -520,6 +547,21 @@ function goalForm(g) {
     h('p', { class: 'mute small', style: 'margin-top:16px' }, 'Progress counts approved personal income minus approved personal expenses since the goal start date. Business transactions and transfers are left out.'));
 }
 
+function safeCard(s) {
+  if (s.done || s.overdue) return null;
+  let body;
+  if (!s.enough) body = h('p', { class: 'mute' }, 'Approve at least a week of transactions, including your income, to see how much you can spend each day.');
+  else if (s.avgIncome <= 0) body = h('p', { class: 'mute' }, `No approved income in the last ${s.winDays} days. Add your pay to see your daily spending limit.`);
+  else if (s.budgetDay <= 0) body = h('p', { class: 'amber' }, `At your recent income of about ${money(s.avgIncome)} a day, saving ${money(s.perDay)} a day leaves nothing to spend. You need more income, a lower target or a later deadline.`);
+  else {
+    const over = s.safeToday < 0;
+    body = h('div', {}, h('div', { class: 'safefig ' + (over ? 'coral' : 'mint') }, money(Math.abs(s.safeToday))),
+      h('p', { class: over ? 'coral' : '' }, over ? 'over your limit today' : 'left to spend today'),
+      h('p', { class: 'mute small', style: 'margin-top:8px' }, `Daily limit ${money(s.budgetDay)}, spent ${money(s.spentToday)} so far today. Worked out from your last ${s.winDays} days: you earn about ${money(s.avgIncome)} a day and need to save ${money(s.perDay)} a day.`));
+  }
+  return h('div', { class: 'sec' }, h('h2', {}, 'Safe to spend today'), body);
+}
+
 function goalView() {
   const g = db.goal;
   if (!g || editGoal) return goalForm(g);
@@ -545,6 +587,7 @@ function goalView() {
       h('div', { class: 'verdict' }, verdict),
       h('div', { class: 'name', style: 'margin-top:6px;font-size:13px' }, `Counts approved personal income and spending dated ${niceDate(g.start)} or later.`),
       h('div', { class: 'herofoot' }, h('span', { class: 'hp' }, `${Math.round(s.pct)}% saved`), h('span', { class: 'hp' }, `Due ${niceDate(g.deadline)}`), !s.done && !s.overdue && h('span', { class: 'hp' }, `${s.daysLeft} days left`))),
+    safeCard(s),
     !s.done && h('div', { class: 'sec' }, h('h2', {}, 'Savings you need'),
       s.overdue ? h('p', { class: 'amber', style: 'margin-top:6px' }, 'The deadline has passed. Edit the goal to set a new date.')
         : h('div', {}, h('p', { class: 'mute' }, `${money(s.remaining)} to go in ${s.daysLeft} days.`),
@@ -728,8 +771,9 @@ function settingsView() {
       }, 'Change passcode'))),
     bioPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
+      h('p', { class: 'mute small', style: 'margin-top:4px' }, backupStatus()),
       h('div', { class: 'btns', style: 'margin:10px 0 16px' },
-        h('button', { class: 'btn', onclick: () => download('goal-tracker-backup.json', localStorage.getItem(KEY), 'application/json') }, 'Download encrypted backup'),
+        h('button', { class: 'btn primary', onclick: backupNow }, 'Back up now'),
         h('button', {
           class: 'btn', onclick: () => {
             if (!confirm('This CSV is not encrypted. Keep it somewhere safe. Continue?')) return;
@@ -748,7 +792,7 @@ function settingsView() {
         }
       }, 'Restore backup')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
 
 addEventListener('keydown', e => {
@@ -765,10 +809,14 @@ function render() {
   const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
   const view = { goal: goalView, approve: approveView, add: addView, report: reportView, settings: settingsView }[tab]();
+  const age = backupAge();
+  const banner = (needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
+    h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
+    h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: backupNow }, 'Back up now'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { bannerHidden = true; render(); } }, 'Later'))) : null;
   app.append(h('div', { class: 'wrap' },
     h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today))),
       h('button', { class: 'ghost', onclick: lock, 'aria-label': 'Lock the app' }, icon('lock', 16), 'Lock')),
-    view));
+    banner, view));
   app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: tab === k ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
     icon(ic, 21), l, k === 'approve' && pend > 0 && h('span', { class: 'badge' }, pend)))));
   requestAnimationFrame(() => requestAnimationFrame(() => {
