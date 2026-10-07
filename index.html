@@ -632,6 +632,7 @@ function incomeCard() {
     pills([['month', 'This month'], ['week', 'This week']], incPeriod, v => { incPeriod = v; render(); }),
     bar('Expected', expected, 'var(--cobalt)'), bar('Actual', actual, 'var(--mint)'),
     h('p', { class: gap > 0.5 && exp.n ? 'amber small' : 'mute small' }, msg),
+    ensureWork().places.map(payInfo).filter(Boolean).map(i => h('div', { class: 'wk' }, h('div', { style: 'min-width:0' }, h('b', {}, `Next ${i.p.name} pay`), h('div', { class: 'mute small' }, `${niceDate(i.pay)} · ${i.n} shift${i.n === 1 ? '' : 's'} counted`)), h('b', { class: 'mint' }, i.n ? 'about ' + money(i.amount) : '$0.00'))),
     h('p', { class: 'mute small', style: 'margin-top:4px' }, 'Expected comes from your ticked shifts. Actual is approved personal income. Pay usually lands after the shift, so Actual trails Expected.'),
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
@@ -668,7 +669,7 @@ function goalView() {
         : h('div', {}, h('p', { class: 'mute' }, `${money(s.remaining)} to go in ${s.daysLeft} days.`),
           h('div', { class: 'strip' }, h('div', { class: 'cell' }, h('b', {}, money(s.perDay)), h('span', {}, 'a day')), h('div', { class: 'cell' }, h('b', {}, money(s.perWeek)), h('span', {}, 'a week')), h('div', { class: 'cell' }, h('b', {}, money(s.perMonth)), h('span', {}, 'a month'))),
           paceNote)),
-    h('button', { class: 'btn', onclick: () => { editGoal = true; render(); } }, 'Edit goal'));
+    h('div', { class: 'btns' }, h('button', { class: 'btn primary', onclick: () => { tab = 'review'; window.scrollTo(0, 0); render(); } }, 'Weekly review'), h('button', { class: 'btn', onclick: () => { editGoal = true; render(); } }, 'Edit goal')));
 }
 
 function approveView() {
@@ -825,7 +826,8 @@ function reportView() {
       h('div', { class: 'flowrow' }, h('span', { class: 'mute small' }, 'Expenses'), h('div', { class: 'bar2' }, h('div', { style: `width:${Math.max(0, s.expenses) / peak * 100}%;background:var(--coral)` })), h('span', { class: 'small' }, money(s.expenses)))),
     gs && !gs.done && !gs.overdue && h('div', { class: 'note good' }, h('p', {}, `To reach "${db.goal.name}" you need to save ${money(gs.perWeek)} a week.`)),
     h('div', { class: 'sec', style: 'margin-top:30px' }, h('h2', {}, 'Where the money went'),
-      entries.length ? h('div', { class: 'donutrow' }, chart.el, legend) : h('p', { class: 'mute', style: 'margin-top:8px' }, 'No approved expenses in this period yet.')));
+      entries.length ? h('div', { class: 'donutrow' }, chart.el, legend) : h('p', { class: 'mute', style: 'margin-top:8px' }, 'No approved expenses in this period yet.')),
+    recurringCard());
 }
 
 // ---------- shifts and expected income ----------
@@ -940,7 +942,7 @@ function placePanel(p, idx) {
     h('button', { class: 'btn', style: 'height:38px;padding:0 14px', onclick: () => { editPlace = editPlace === p.id ? null : p.id; render(); } }, editPlace === p.id ? 'Close' : 'Edit'));
   const wrap = kids => h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head, kids);
   if (editPlace !== p.id) return wrap(null);
-  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax), exH = numIn(p.extraHr), exS = numIn(p.extraShift);
+  const nm = h('input', { value: p.name, maxlength: '30' }), min = numIn(p.min), tax = numIn(p.tax), exH = numIn(p.extraHr), exS = numIn(p.extraShift), pe = numIn(p.payEvery), pdIn = h('input', { type: 'date', value: p.payDay || '' }), pl = numIn(p.payLag);
   let typeForms;
   if (p.types.length) {
     typeForms = p.types.map(t => {
@@ -956,12 +958,14 @@ function placePanel(p, idx) {
   return wrap(h('div', { style: 'margin-top:14px' }, field('Name', nm), typeForms,
     field('Extra per hour on every hour, e.g. team leader allowance (optional)', exH), field('Extra per shift, e.g. laundry (optional)', exS),
     field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
+    h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'Pay cycle (optional): lets the Goal screen estimate your next pay.'),
+    field('Paid every how many days (7 or 14)', pe), field('A payday, past or future', pdIn), field('Days between the last shift in a pay period and payday', pl),
     h('div', { class: 'btns' },
       h('button', { class: 'btn primary', onclick: async () => {
         if (!nm.value.trim()) return flash('Give the workplace a name.');
         if (p.types.length) p.types.forEach(t => { Object.assign(t, { rate: nv(t._f.rate), sat: nv(t._f.sat), sun: nv(t._f.sun), hours: nv(t._f.hours) }); delete t._f; });
         else { Object.assign(p, { rate: nv(p._f.rate), sat: nv(p._f.sat), sun: nv(p._f.sun), hours: nv(p._f.hours) }); delete p._f; }
-        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)), extraHr: nv(exH), extraShift: nv(exS) });
+        Object.assign(p, { name: nm.value.trim(), min: nv(min), tax: Math.min(100, nv(tax)), extraHr: nv(exH), extraShift: nv(exS), payEvery: nv(pe), payDay: pdIn.value || '', payLag: nv(pl) });
         editPlace = null; await save(); flash('Saved.'); render();
       } }, 'Save'),
       p.types.length
@@ -1032,6 +1036,93 @@ function shiftsView() {
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
 }
 
+// ---------- regular payments ----------
+const median = a => { const x = [...a].sort((p, q) => p - q), m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; };
+const EVERY = { 7: 'week', 14: 'fortnight', 30: 'month' };
+// Spots expenses that repeat at a steady gap and a steady amount: weekly, fortnightly or monthly, at least three times.
+function recurring() {
+  const groups = {}, today = iso(new Date()), out = [];
+  approved().filter(t => t.amount < 0 && t.category !== 'Transfer').forEach(t => { const k = merchantKey(t.desc); if (k) (groups[k] = groups[k] || []).push(t); });
+  for (const k in groups) {
+    const list = groups[k].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+    if (list.length < 3) continue;
+    const gaps = []; for (let i = 1; i < list.length; i++) gaps.push(daysBetween(list[i - 1].date, list[i].date));
+    const m = median(gaps), every = m >= 6 && m <= 8 ? 7 : m >= 13 && m <= 15 ? 14 : m >= 27 && m <= 32 ? 30 : 0; if (!every) continue;
+    const tol = every === 30 ? 3 : 2;
+    if (gaps.filter(g => Math.abs(g - every) <= tol).length < gaps.length * 0.75) continue;
+    const amts = list.map(t => -t.amount), med = median(amts);
+    if (amts.filter(a => Math.abs(a - med) <= med * 0.15).length < amts.length * 0.75) continue;
+    const last = list[list.length - 1].date; if (daysBetween(last, today) > every * 2 + 3) continue; // stopped paying it
+    const step = d => { if (every === 30) { const x = isoToDate(d); x.setMonth(x.getMonth() + 1); return iso(x); } return iso(addDays(isoToDate(d), every)); };
+    let next = step(last); while (next < today) next = step(next);
+    out.push({ key: k, label: list[list.length - 1].desc, amount: med, every, next, perMonth: med * 30.4 / every, count: list.length });
+  }
+  return out.sort((a, b) => b.perMonth - a.perMonth);
+}
+function recurringCard() {
+  const list = recurring(), total = list.reduce((n, r) => n + r.perMonth, 0);
+  return h('div', { class: 'sec', style: 'margin-top:30px' }, h('h2', {}, 'Regular payments'),
+    !list.length ? h('p', { class: 'mute', style: 'margin-top:8px' }, 'Nothing regular spotted yet. Rent, subscriptions and other bills that repeat at least three times, at the same amount and gap, show up here.')
+      : h('div', {}, h('p', { class: 'mute small', style: 'margin:4px 0 6px' }, `About ${money(total)} a month goes on these.`),
+        list.map(r => h('div', { class: 'wk' }, h('div', { style: 'min-width:0' }, h('b', {}, r.label), h('div', { class: 'mute small' }, `${money(r.amount)} every ${EVERY[r.every]} · next about ${niceDate(r.next)}`)), h('span', { class: 'mute small' }, `${money(r.perMonth)}/mo`)))));
+}
+
+// ---------- weekly review ----------
+function reviewView() {
+  const today = iso(new Date()), from = iso(addDays(new Date(), -6)), nw = weekDates(1);
+  const s = summarise(approved().filter(t => t.scope === 'personal' && t.date >= from && t.date <= today));
+  const worked = workTotals(from, today), next = workTotals(nw[0], nw[6]), gs = db.goal ? goalStats() : null;
+  const top = Object.entries(s.byCat).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const soon = recurring().filter(r => r.next <= iso(addDays(new Date(), 7)));
+  const row = (a, b, cls) => h('div', { class: 'wk' }, h('span', { class: 'mute' }, a), h('b', { class: cls || '' }, b));
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, 'Weekly review'), h('p', { class: 'mute' }, `The last 7 days, ${niceDate(from)} to ${niceDate(today)}, and what is coming.`)),
+    h('div', { class: 'panel' }, h('h2', {}, 'Income'),
+      row('Expected from shifts worked', money(worked.net)), row('Actual income received', money(s.income), s.income >= worked.net - 0.5 ? 'mint' : 'amber'),
+      worked.n === 0 && h('p', { class: 'mute small' }, 'No shifts ticked for these days. Tick them in Shifts to compare.')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Spending'), row('Spent', money(s.expenses)),
+      top.length ? top.map(([c, v]) => row(c, money(v))) : h('p', { class: 'mute small' }, 'No approved spending in these 7 days.')),
+    gs && !gs.done && h('div', { class: 'panel' }, h('h2', {}, 'Saving'), row('Saved this week', money(s.net), s.net >= gs.perWeek ? 'mint' : 'amber'), row('Your goal needs', money(gs.perWeek) + ' a week'),
+      h('p', { class: s.net >= gs.perWeek ? 'mint small' : 'amber small' }, s.net >= gs.perWeek ? 'On track this week.' : `${money(gs.perWeek - s.net)} short of what the goal needs this week.`)),
+    h('div', { class: 'panel' }, h('h2', {}, 'Next week'),
+      next.n ? h('div', {}, row('Shifts planned', String(next.n)), row('Expected income', money(next.net), 'mint')) : h('p', { class: 'amber' }, 'No shifts planned for next week yet.'),
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: () => { weekOff = 1; selDate = null; tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan next week'))),
+    h('div', { class: 'panel' }, h('h2', {}, 'Bills due in the next 7 days'),
+      soon.length ? soon.map(r => row(`${r.label} · ${niceDate(r.next)}`, money(r.amount))) : h('p', { class: 'mute small' }, 'None spotted.')),
+    h('button', { class: 'btn', onclick: () => { tab = 'goal'; window.scrollTo(0, 0); render(); } }, 'Back to Goal'));
+}
+
+// ---------- next pay ----------
+// A workplace with a pay cycle: every N days, on a known payday, covering the N days that end LAG days before payday.
+function payInfo(p) {
+  if (!(p.payEvery > 0) || !p.payDay) return null;
+  const today = isoToDate(iso(new Date())), step = p.payEvery; let pay = isoToDate(p.payDay);
+  const n = Math.ceil((today - pay) / (86400000 * step)); if (n > 0) pay = addDays(pay, n * step);
+  const end = addDays(pay, -(p.payLag || 0)), start = addDays(end, -(step - 1)), t = workTotals(iso(start), iso(end)), o = t.per[p.id] || { n: 0, gross: 0 };
+  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, amount: o.gross * (1 - (p.tax || 0) / 100) };
+}
+
+// ---------- 9am reminder ----------
+function icsText() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Goal Tracker//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', 'UID:plan-shifts-daily@goal-tracker', 'DTSTAMP:' + stamp,
+    'DTSTART:' + iso(new Date()).replace(/-/g, '') + 'T090000', 'DURATION:PT15M', 'RRULE:FREQ=DAILY', "SUMMARY:Plan today's shifts", "DESCRIPTION:Open Goal Tracker and tick today's shifts.",
+    'URL:https://immohit6.github.io/goal-tracker/', 'BEGIN:VALARM', 'ACTION:DISPLAY', "DESCRIPTION:Plan today's shifts", 'TRIGGER:PT0S', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+}
+async function addReminder() {
+  const text = icsText(), name = 'plan-shifts-9am.ics', file = new File([text], name, { type: 'text/calendar' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: "Plan today's shifts" });
+    else download(name, text, 'text/calendar');
+  } catch (e) { if (!(e && e.name === 'AbortError')) download(name, text, 'text/calendar'); }
+}
+function reminderPanel() {
+  return h('div', { class: 'panel' }, h('h2', {}, 'Daily 9am reminder'),
+    h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'This app cannot send notifications by itself, because it never connects to a server. Instead, add a repeating 9am event to your Calendar. It alerts you every day and links back to the app.'),
+    h('button', { class: 'btn primary', onclick: addReminder }, 'Add 9am reminder to Calendar'),
+    h('p', { class: 'mute small', style: 'margin-top:10px' }, 'Tap Calendar in the share sheet, then Add. To change the time later, edit the event in Calendar.'));
+}
+
 function settingsView() {
   const np = h('input', { type: 'password', placeholder: 'New passcode (8+ characters)', autocomplete: 'off' });
   const bk = h('input', { type: 'file', accept: '.json' });
@@ -1049,6 +1140,7 @@ function settingsView() {
         }
       }, 'Change passcode'))),
     bioPanel(),
+    reminderPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
       h('p', { class: 'mute small', style: 'margin-top:4px' }, backupStatus()),
       h('p', { class: persisted === false ? 'amber small' : 'mute small', style: 'margin-top:6px' }, persistText()),
@@ -1069,7 +1161,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, income bars. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, review and bills. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
@@ -1087,7 +1179,7 @@ function render() {
   const pend = db.tx.filter(t => t.status === 'pending').length;
   const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
-  const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, report: reportView, settings: settingsView }[tab]();
+  const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, review: reviewView, report: reportView, settings: settingsView }[tab]();
   const age = backupAge();
   const banner = (needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
@@ -1096,7 +1188,7 @@ function render() {
     h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today))),
       h('button', { class: 'ghost', onclick: lock, 'aria-label': 'Lock the app' }, icon('lock', 16), 'Lock')),
     banner, view));
-  app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: tab === k ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
+  app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: (tab === k || (k === 'goal' && tab === 'review')) ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
     icon(ic, 21), l, k === 'approve' && pend > 0 && h('span', { class: 'badge' }, pend)))));
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.querySelectorAll('[data-w]').forEach(e => { e.style.width = e.dataset.w + '%'; });
