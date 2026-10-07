@@ -293,11 +293,13 @@ async function bioUnlock() {
   await unlock(pass);
 }
 // ---------- backup reminder ----------
-const BK = 'gt_lastbackup_v1', BACKUP_DAYS = 7;
+const BK = 'gt_lastbackup_v1', BACKUP_DAYS = 7, BACKUP_DAYS_RISKY = 2;
+let persisted = null; // true: iOS/browser promised not to evict. false: it may. null: not checked yet.
+const backupLimit = () => persisted === true ? BACKUP_DAYS : BACKUP_DAYS_RISKY;
 let bannerHidden = false;
 const lastBackup = () => { try { return parseInt(localStorage.getItem(BK), 10) || 0; } catch (e) { return 0; } };
 function backupAge() { const t = lastBackup(); return t ? Math.floor((Date.now() - t) / 86400000) : null; }
-function needsBackup() { if (!db || (!db.tx.length && !db.goal)) return false; const a = backupAge(); return a === null || a >= BACKUP_DAYS; }
+function needsBackup() { if (!db || (!db.tx.length && !db.goal)) return false; const a = backupAge(); return a === null || a >= backupLimit(); }
 function backupStatus() { const a = backupAge(); return a === null ? 'You have not made a backup yet.' : a === 0 ? 'Last backup: today.' : `Last backup: ${a} day${a === 1 ? '' : 's'} ago.`; }
 // Called straight from a tap, with nothing awaited first, so the iPhone share sheet is allowed to open.
 async function doBackup() {
@@ -312,7 +314,24 @@ async function doBackup() {
   return true;
 }
 const backupNow = async () => { try { const ok = await doBackup(); if (ok) flash('Backup saved. Keep the file somewhere safe, such as iCloud Drive.'); } catch (e) { flash((e && e.message) || 'The backup did not work.'); } };
-function askPersist() { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {} }
+function askPersist() {
+  try {
+    if (!(navigator.storage && navigator.storage.persist)) { persisted = false; return; }
+    const set = v => { const was = persisted; persisted = !!v; if (was !== persisted && db) render(); };
+    (navigator.storage.persisted ? navigator.storage.persisted() : Promise.resolve(false))
+      .then(already => already ? true : navigator.storage.persist()).then(set, () => set(false));
+  } catch (e) { persisted = false; }
+}
+const persistText = () => persisted === true ? 'Storage protection: on. This device has promised not to clear the app data on its own. A backup is still your safety net.'
+  : persisted === false ? 'Storage protection: off. This device may clear the app data when space runs low or the app is unused. Back up often (the reminder comes every 2 days). Using the app from the Home Screen icon usually fixes this.'
+  : 'Storage protection: unlock the app to check.';
+// Replace the vault with a backup file. Used by Settings and by the first screen.
+function restoreFrom(f, done) {
+  if (!f) return flash('Choose a backup file first.');
+  const rd = new FileReader();
+  rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); localStorage.removeItem(BIO); db = null; cryptoKey = null; lockErr = ''; done(); } catch (e) { flash('That file is not a valid backup.'); } };
+  rd.readAsText(f);
+}
 function bioPanel() {
   const on = !!bioRecord();
   return h('div', { class: 'panel' }, h('h2', {}, 'Face ID'),
@@ -508,12 +527,16 @@ function lockView() {
   const bioBtn = (has && bioSupported() && bioRecord()) ? h('button', { class: 'btn', style: 'width:100%;margin-top:10px', onclick: async () => {
     try { await bioUnlock(); lockErr = ''; tab = 'goal'; intro = true; bump(); askPersist(); render(); }
     catch (e) { lockErr = 'Face ID did not work. Use your passcode.'; render(); } } }, 'Unlock with Face ID') : null;
+  const rf = has ? null : h('input', { type: 'file', accept: '.json', 'aria-label': 'Backup file', style: 'margin-top:8px' });
+  const restoreBox = has ? null : h('div', { class: 'panel', style: 'margin-top:18px;text-align:left' },
+    h('b', {}, 'Already have a backup?'), h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'If this device cleared your data, pick your backup file here. Then unlock with your old passcode.'),
+    rf, h('button', { class: 'btn', style: 'width:100%;margin-top:10px', onclick: () => restoreFrom(rf.files[0], () => { flash('Backup restored. Enter your old passcode.'); render(); }) }, 'Restore backup'));
   [p1, p2].forEach(i => i && i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
   return h('div', { class: 'lockwrap' }, h('div', { class: 'lockcard' },
     h('div', { class: 'mark' }, icon('ruler', 26)),
     h('h1', {}, has ? 'Welcome back' : 'Goal Tracker'),
     h('p', { class: 'mute', style: 'margin-bottom:22px' }, has ? 'Your data is encrypted on this device. Enter your passcode to open it.' : 'Your data is encrypted with this passcode and stored only on this device. There is no recovery: if you forget the passcode, the data is gone. If you already made a vault, open the app the same way as before: private tabs, other browsers and home-screen icons each keep their own data.'),
-    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, bioBtn, err,
+    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, bioBtn, err, restoreBox,
     h('p', { class: 'mute small', style: 'margin-top:18px' }, 'This page cannot make network connections. Nothing leaves your device.')));
 }
 
@@ -772,6 +795,7 @@ function settingsView() {
     bioPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
       h('p', { class: 'mute small', style: 'margin-top:4px' }, backupStatus()),
+      h('p', { class: persisted === false ? 'amber small' : 'mute small', style: 'margin-top:6px' }, persistText()),
       h('div', { class: 'btns', style: 'margin:10px 0 16px' },
         h('button', { class: 'btn primary', onclick: backupNow }, 'Back up now'),
         h('button', {
@@ -784,11 +808,9 @@ function settingsView() {
       field('Restore from an encrypted backup (replaces what is here)', bk),
       h('button', {
         class: 'btn', onclick: () => {
-          const f = bk.files[0]; if (!f) return flash('Choose a backup file first.');
+          if (!bk.files[0]) return flash('Choose a backup file first.');
           if (!confirm('Replace the current vault with this backup?')) return;
-          const rd = new FileReader();
-          rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); localStorage.removeItem(BIO); db = null; cryptoKey = null; lockErr = ''; render(); } catch (e) { flash('That file is not a valid backup.'); } };
-          rd.readAsText(f);
+          restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,

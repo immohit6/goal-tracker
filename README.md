@@ -12,7 +12,7 @@ A private savings goal tracker in a single HTML file. Set a goal, bring in your 
 
 Your data stays in that browser on that device. A different browser, a private tab, a different home-screen icon or a different device starts empty unless you restore a backup. Pick one way to open the app and stick to it.
 
-**On iPhone:** open the app link in Safari, tap Share, then Add to Home Screen, and use that icon from then on. In Settings, turn on Face ID. The app reminds you to back up every 7 days. Tap Back up now and save the file to iCloud Drive.
+**On iPhone:** open the app link in Safari, tap Share, then Add to Home Screen, and use that icon from then on. In Settings, turn on Face ID. The app reminds you to back up every 7 days (every 2 days if your device has not promised to keep the data; Settings shows which). Tap Back up now and save the file to iCloud Drive. If your data is ever cleared, the first screen has a Restore backup button.
 
 ## What it does
 
