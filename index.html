@@ -51,7 +51,7 @@ p{margin:0}
 
 /* dock */
 .dock{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;gap:2px;padding:6px;border-radius:22px;background:var(--dock);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:var(--shadow);border:1px solid var(--line);z-index:5;width:min(calc(100vw - 20px),440px)}
-.dock button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0;padding:8px 4px;border:0;background:transparent;border-radius:16px;color:var(--mute);font-size:11.5px;font-weight:550}
+.dock button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0;padding:8px 1px;border:0;background:transparent;border-radius:16px;color:var(--mute);font-size:10.5px;font-weight:550}
 .dock button.on{background:var(--ink);color:var(--paper)}
 .dock .badge{position:absolute;top:3px;right:9px;background:var(--coral);color:#fff;border-radius:9px;min-width:17px;height:17px;padding:0 5px;font-size:10.5px;line-height:17px;font-weight:700}
 
@@ -168,6 +168,17 @@ input:focus,select:focus{border-color:var(--cobalt)}
 .banner{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:14px;padding:12px 14px;margin-bottom:16px}
 .banner p{margin:2px 0 0}
 .safefig{font-size:clamp(38px,11vw,52px);font-weight:300;letter-spacing:-.03em;line-height:1.1;margin-top:8px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.dow{text-align:center;font-size:11px;color:var(--mute);padding-bottom:2px}
+.day{aspect-ratio:1/1.25;border:1px solid var(--line);border-radius:10px;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:5px 1px 4px;font-size:13px;min-width:0;color:var(--ink)}
+.day.has{border-color:var(--cobalt);background:color-mix(in srgb,var(--cobalt) 10%,var(--surface))}
+.day.today b{text-decoration:underline}
+.day.blank{border:0;background:transparent;pointer-events:none}
+.day small{font-size:9.5px;color:var(--mint);font-weight:650;line-height:1}
+.dots{display:flex;gap:2px;height:6px}.dots i{width:6px;height:6px;border-radius:50%;display:block}
+.monthnav{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+.monthnav button{width:44px;height:44px;border:1px solid var(--line);background:var(--surface);border-radius:12px;font-size:18px}
+.wk{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
 .strip>*,.flowrow>*,.legend .row>*,.actions>*,.donutrow>*,.field{min-width:0}
 @media (max-width:430px){
   .strip{grid-template-columns:1fr}
@@ -208,6 +219,7 @@ const ICONS = {
   sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
   lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
+  cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   ruler: '<path d="M3 15l12-12 6 6-12 12zM8 10l2 2M11 7l2 2M5 13l2 2"/>'
 };
 function icon(name, size) {
@@ -776,6 +788,131 @@ function reportView() {
       entries.length ? h('div', { class: 'donutrow' }, chart.el, legend) : h('p', { class: 'mute', style: 'margin-top:8px' }, 'No approved expenses in this period yet.')));
 }
 
+// ---------- shifts and expected income ----------
+let shiftMonth = 0, brush = null, fillDays = new Set([1, 2, 3, 4, 5]), editPlace = null;
+const PCOL = ['var(--cobalt)', 'var(--mint)', 'var(--amber)', 'var(--coral)'];
+function ensureWork() {
+  if (!db.work) db.work = { places: [
+    { id: uid(), name: 'Narracan', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 },
+    { id: uid(), name: 'Menorock', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 },
+    { id: uid(), name: 'Uber', rate: 0, sat: 0, sun: 0, hours: 0, min: 150, tax: 0 }], shifts: {} };
+  if (!db.work.places.some(p => p.id === brush)) brush = db.work.places.length ? db.work.places[0].id : null;
+  return db.work;
+}
+// Pay for one shift: the rate for that weekday times paid hours, but never less than the place's minimum.
+function shiftPay(p, date) {
+  const wd = isoToDate(date).getDay(); let r = p.rate || 0;
+  if (wd === 6 && p.sat > 0) r = p.sat; if (wd === 0 && p.sun > 0) r = p.sun;
+  return Math.max(r * (p.hours || 0), p.min || 0);
+}
+function workTotals(from, to) {
+  const w = ensureWork(), per = {}; let n = 0, gross = 0, net = 0;
+  for (const d in w.shifts) {
+    if (d < from || d > to) continue;
+    for (const id of w.shifts[d]) {
+      const p = w.places.find(x => x.id === id); if (!p) continue;
+      const g = shiftPay(p, d); n++; gross += g; net += g * (1 - (p.tax || 0) / 100);
+      const o = per[id] || (per[id] = { n: 0, gross: 0 }); o.n++; o.gross += g;
+    }
+  }
+  return { n, gross, net, per };
+}
+const weekDates = off => { const t = addDays(new Date(), off * 7); const mon = addDays(t, -((t.getDay() + 6) % 7)); return [...Array(7)].map((_, i) => iso(addDays(mon, i))); };
+async function fillShifts(dates) {
+  const w = ensureWork(); if (!brush) return flash('Add a workplace first.');
+  if (!fillDays.size) return flash('Pick at least one weekday.');
+  let added = 0;
+  for (const d of dates) { if (!fillDays.has(isoToDate(d).getDay())) continue; const a = w.shifts[d] || (w.shifts[d] = []); if (!a.includes(brush)) { a.push(brush); added++; } }
+  const y = window.scrollY; await save(); flash(added ? `Marked ${added} shift${added === 1 ? '' : 's'}.` : 'Those days were already marked.'); render(); window.scrollTo(0, y);
+}
+async function toggleShift(date) {
+  const w = ensureWork(); if (!brush) return flash('Add a workplace first.');
+  const a = w.shifts[date] || (w.shifts[date] = []); const i = a.indexOf(brush);
+  if (i >= 0) a.splice(i, 1); else a.push(brush);
+  if (!a.length) delete w.shifts[date];
+  const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
+}
+function placeSummary(p) { return p.min > 0 && !(p.rate > 0) ? `Flat ${money(p.min)} per shift` : `${money(p.rate || 0)}/h × ${p.hours || 0}h` + (p.min > 0 ? `, minimum ${money(p.min)}` : '') + (p.tax > 0 ? `, ${p.tax}% tax` : ''); }
+const numIn = (v, ph) => h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: v || '', placeholder: ph || '0' });
+
+function placePanel(p, idx) {
+  const w = ensureWork();
+  const head = h('div', { style: 'display:flex;align-items:center;gap:10px' },
+    h('i', { style: `width:10px;height:10px;border-radius:50%;flex:none;background:${PCOL[idx % 4]}` }),
+    h('div', { style: 'flex:1;min-width:0' }, h('b', {}, p.name), h('div', { class: 'mute small' }, placeSummary(p))),
+    h('button', { class: 'btn', style: 'height:38px;padding:0 14px', onclick: () => { editPlace = editPlace === p.id ? null : p.id; render(); } }, editPlace === p.id ? 'Close' : 'Edit'));
+  if (editPlace !== p.id) return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head);
+  const nm = h('input', { value: p.name, maxlength: '30' }), rate = numIn(p.rate), sat = numIn(p.sat, 'same as weekday'), sun = numIn(p.sun, 'same as weekday'), hrs = numIn(p.hours), min = numIn(p.min), tax = numIn(p.tax);
+  return h('div', { style: 'padding:10px 0;border-top:1px solid var(--line)' }, head,
+    h('div', { style: 'margin-top:14px' },
+      field('Name', nm), field('Hourly rate, weekday (from your payslip)', rate), field('Saturday rate (optional)', sat), field('Sunday rate (optional)', sun),
+      field('Paid hours per shift', hrs), field('Minimum pay per shift (optional)', min), field('Tax taken out, % (optional)', tax),
+      h('div', { class: 'btns' },
+        h('button', { class: 'btn primary', onclick: async () => {
+          if (!nm.value.trim()) return flash('Give the workplace a name.');
+          const n = e => Math.max(0, parseFloat(e.value) || 0);
+          Object.assign(p, { name: nm.value.trim(), rate: n(rate), sat: n(sat), sun: n(sun), hours: n(hrs), min: n(min), tax: Math.min(100, n(tax)) });
+          editPlace = null; await save(); flash('Saved.'); render();
+        } }, 'Save'),
+        h('button', { class: 'btn danger', onclick: async () => {
+          if (!confirm(`Delete ${p.name} and all its marked shifts?`)) return;
+          w.places = w.places.filter(x => x.id !== p.id); for (const d in w.shifts) { w.shifts[d] = w.shifts[d].filter(i => i !== p.id); if (!w.shifts[d].length) delete w.shifts[d]; }
+          editPlace = null; await save(); render();
+        } }, 'Delete'))));
+}
+
+function shiftsView() {
+  const w = ensureWork(), todayIso = iso(new Date());
+  const base = new Date(new Date().getFullYear(), new Date().getMonth() + shiftMonth, 1);
+  const y = base.getFullYear(), m = base.getMonth(), dim = new Date(y, m + 1, 0).getDate();
+  const dates = [...Array(dim)].map((_, i) => iso(new Date(y, m, i + 1)));
+  const tot = workTotals(dates[0], dates[dim - 1]);
+  const wk = weekDates(0), wkTot = workTotals(wk[0], wk[6]);
+  const idx = id => w.places.findIndex(p => p.id === id);
+  const unset = w.places.filter(p => p.hours > 0 && !(p.rate > 0) && !(p.min > 0) && Object.values(w.shifts).some(a => a.includes(p.id)));
+
+  const cells = [];
+  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach(d => cells.push(h('div', { class: 'dow' }, d)));
+  for (let i = 0; i < (base.getDay() + 6) % 7; i++) cells.push(h('div', { class: 'day blank' }));
+  dates.forEach(d => {
+    const ids = w.shifts[d] || [], pay = ids.reduce((n, id) => { const p = w.places.find(x => x.id === id); return n + (p ? shiftPay(p, d) : 0); }, 0);
+    cells.push(h('button', { class: 'day' + (ids.length ? ' has' : '') + (d === todayIso ? ' today' : ''), 'aria-pressed': ids.length ? 'true' : 'false', 'aria-label': niceDate(d) + (ids.length ? ', shift marked' : ''), onclick: () => toggleShift(d) },
+      h('b', { style: 'font-weight:500' }, String(+d.slice(8))),
+      h('div', { class: 'dots' }, ids.map(id => h('i', { style: `background:${PCOL[Math.max(0, idx(id)) % 4]}` }))),
+      h('small', {}, pay > 0 ? '$' + Math.round(pay) : '')));
+  });
+  const peak = Math.max(1, ...Object.values(tot.per).map(o => o.gross));
+  return h('div', {},
+    h('div', { class: 'sec' }, h('h2', {}, 'Shifts and expected income'),
+      h('p', { class: 'mute' }, 'Pick a workplace, then tap the days you are working. Each tapped day adds what you expect to earn. Get your rates from your payslip.')),
+    unset.length > 0 && h('div', { class: 'note warn', style: 'margin-bottom:16px' }, h('b', {}, 'Rate needed'), h('p', { class: 'mute small' }, `Add your pay rate for ${unset.map(p => p.name).join(' and ')} (Edit under Workplaces) to see dollar amounts.`)),
+    h('div', { class: 'pills', style: 'margin-bottom:12px' }, w.places.map((p, i) => h('button', { class: 'pill' + (p.id === brush ? ' on' : ''), onclick: () => { brush = p.id; render(); } }, h('span', { style: `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:${PCOL[i % 4]}` }), p.name))),
+    h('div', { class: 'mute small', style: 'margin:4px 0 6px' }, 'Mark many days at once: choose weekdays, then a range.'),
+    h('div', { style: 'display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin-bottom:10px' }, [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']].map(([n, l]) => h('button', { style: 'padding:11px 0;min-width:0;font-size:12.5px', class: 'pill' + (fillDays.has(n) ? ' on' : ''), 'aria-pressed': fillDays.has(n) ? 'true' : 'false', onclick: () => { fillDays.has(n) ? fillDays.delete(n) : fillDays.add(n); render(); } }, l))),
+    h('div', { class: 'btns' },
+      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(weekDates(0)) }, 'This week'),
+      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(weekDates(1)) }, 'Next week'),
+      h('button', { class: 'btn', style: 'flex:1;padding:0 6px', onclick: () => fillShifts(dates) }, 'Whole month')),
+    h('div', { class: 'monthnav' },
+      h('button', { 'aria-label': 'Previous month', onclick: () => { shiftMonth--; render(); } }, '‹'),
+      h('b', {}, base.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })),
+      h('button', { 'aria-label': 'Next month', onclick: () => { shiftMonth++; render(); } }, '›')),
+    h('div', { class: 'cal' }, cells),
+    h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'Expected this month'),
+      h('div', { class: 'strip' },
+        h('div', { class: 'cell' }, h('b', {}, String(tot.n)), h('span', {}, tot.n === 1 ? 'shift' : 'shifts')),
+        h('div', { class: 'cell' }, h('b', {}, money(tot.gross)), h('span', {}, 'before tax')),
+        h('div', { class: 'cell' }, h('b', { class: 'mint' }, money(tot.net)), h('span', {}, 'after tax'))),
+      w.places.filter(p => tot.per[p.id]).map(p => h('div', { class: 'flowrow', style: 'margin-top:12px;grid-template-columns:104px 1fr auto' }, h('span', { class: 'mute small' }, `${p.name} · ${tot.per[p.id].n}`),
+        h('div', { class: 'bar2' }, h('div', { style: `width:${tot.per[p.id].gross / peak * 100}%;background:${PCOL[idx(p.id) % 4]}` })), h('span', { class: 'small' }, money(tot.per[p.id].gross)))),
+      h('div', { class: 'wk', style: 'margin-top:14px' }, h('span', { class: 'mute' }, 'This week (Mon to Sun)'), h('b', {}, `${money(wkTot.gross)} · ${wkTot.n} shift${wkTot.n === 1 ? '' : 's'}`)),
+      h('p', { class: 'mute small' }, 'These are estimates from the rates you entered. Penalty rates for public holidays, overtime and super are not included.'),
+      tot.n > 0 && h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: async () => { if (!confirm('Clear every marked shift in ' + base.toLocaleDateString('en-AU', { month: 'long' }) + '?')) return; dates.forEach(d => delete w.shifts[d]); await save(); render(); } }, 'Clear this month'))),
+    h('div', { class: 'panel' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Uber starts with a $150 minimum per day. Add a workplace for each shift type if the pay differs.'),
+      w.places.map((p, i) => placePanel(p, i)),
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', rate: 0, sat: 0, sun: 0, hours: 8, min: 0, tax: 0 }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
+}
+
 function settingsView() {
   const np = h('input', { type: 'password', placeholder: 'New passcode (8+ characters)', autocomplete: 'off' });
   const bk = h('input', { type: 'file', accept: '.json' });
@@ -828,9 +965,9 @@ function render() {
   const app = $('#app'); app.replaceChildren();
   if (!db) { kbd = null; app.append(lockView()); return; }
   const pend = db.tx.filter(t => t.status === 'pending').length;
-  const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
+  const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
-  const view = { goal: goalView, approve: approveView, add: addView, report: reportView, settings: settingsView }[tab]();
+  const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, report: reportView, settings: settingsView }[tab]();
   const age = backupAge();
   const banner = (needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
