@@ -621,8 +621,8 @@ function payTable() {
   const now = new Date(), today = iso(now), wd = weekDates(0), fs = fortnightStart(today), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
   const rows = [['This week', wd[0], wd[6]], ['This fortnight', fs, iso(addDays(isoToDate(fs), 13))], ['This month', iso(new Date(now.getFullYear(), now.getMonth(), 1)), iso(new Date(now.getFullYear(), now.getMonth() + 1, 0))]];
   const cell = (v, cls) => h('div', { style: 'text-align:right', class: cls || '' }, money(v));
-  const head = ['', 'Before tax', 'Tax', 'After tax'].map((t, i) => h('div', { class: 'mute small', style: i ? 'text-align:right' : '' }, t));
-  const body = rows.flatMap(([lb, a, b]) => { const t = workTotals(a, b); return [h('div', {}, h('b', {}, lb), h('div', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`)), cell(t.gross), cell(t.tax, 'mute'), h('b', { style: 'text-align:right', class: 'mint' }, money(t.net))]; });
+  const head = ['', 'Before tax', 'Sacrifice', 'Tax', 'After tax'].map((t, i) => h('div', { class: 'mute small', style: i ? 'text-align:right' : '' }, t));
+  const body = rows.flatMap(([lb, a, b]) => { const t = workTotals(a, b); return [h('div', {}, h('b', {}, lb), h('div', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`)), cell(t.gross), cell(t.sac || 0, 'mute'), cell(t.tax, 'mute'), h('b', { style: 'text-align:right', class: 'mint' }, money(t.net))]; });
   // Hourly workplaces with shifts but no tax set up are why Before and After tax can match. Offer a one-tap fix.
   const w = ensureWork(), mt = workTotals(rows[2][1], rows[2][2]);
   const notax = w.places.filter(p => mt.per[p.id] && p.types.length && !(p.taxMode === 'ato' || (p.taxMode === 'flat' && p.tax > 0)));
@@ -631,7 +631,7 @@ function payTable() {
     h('div', { class: 'btns' },
       h('button', { class: 'btn primary', style: 'height:40px', onclick: async () => { p.taxMode = 'ato'; p.tft = true; await save(); render(); } }, 'ATO, tax-free threshold'),
       h('button', { class: 'btn', style: 'height:40px', onclick: async () => { p.taxMode = 'ato'; p.tft = false; await save(); render(); } }, 'ATO, no threshold'))));
-  return h('div', {}, h('div', { style: 'display:grid;grid-template-columns:1.3fr 1fr .8fr 1fr;gap:10px 6px;align-items:center;margin:10px 0 14px;font-size:14px' }, head, body), fix);
+  return h('div', {}, h('div', { style: 'display:grid;grid-template-columns:1.15fr 1fr .85fr .75fr 1fr;gap:10px 4px;align-items:center;margin:10px 0 14px;font-size:12.5px' }, head, body), fix);
 }
 
 let incPeriod = 'month';
@@ -853,6 +853,8 @@ function ensureWork() {
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => !(t.rate > 0))) p.types.forEach(t => { t.rate = 50; }); });
   // Tax: an old flat % stays flat. Otherwise Narracan and Menorock start on the ATO tables (tax-free threshold on Narracan only, change it in Edit) and Uber has no withholding.
   db.work.places.forEach(p => { if (p.taxMode) return; if (p.tax > 0) p.taxMode = 'flat'; else if (p.name === 'Narracan') { p.taxMode = 'ato'; p.tft = true; } else if (p.name === 'Menorock') { p.taxMode = 'ato'; p.tft = false; } else p.taxMode = 'none'; });
+  // Salary sacrifice through Maxxia at Narracan Gardens, taken from each fortnightly pay before tax.
+  db.work.places.forEach(p => { if (p.sac === undefined) p.sac = p.name === 'Narracan' ? [{ name: 'Rent and mortgage', amount: 995 }, { name: 'Meals and entertainment', amount: 83 }] : []; });
   // Menorock weekends use the same loadings as Narracan on its $40 base: Sat x1.5 = $60, Sun x2.0 = $80 (no casual loading on top).
   db.work.places.forEach(p => { if (p.name === 'Menorock' && p.types.length && p.types.every(t => t.rate === 50 && !(t.sat > 0) && !(t.sun > 0))) p.types.forEach(t => { t.sat = 60; t.sun = 80; }); });
   // Menorock shifts from the user's note: two morning shifts (7.5h and 5.5h) and an occasional PM (3pm to 9pm less a 30 minute break = 5.5h).
@@ -900,6 +902,7 @@ function periodTax(p, gross, days) {
 }
 const weekStart = d => { const x = isoToDate(d); return iso(addDays(x, -((x.getDay() + 6) % 7))); };
 // The pay period a date falls in for one workplace. Paid fortnightly: the 14 days that end `lag` days before payday. Otherwise the Mon-Sun week.
+const sacFortnight = p => (p.sac || []).reduce((n, x) => n + (+x.amount || 0), 0);
 function periodOf(p, d) {
   if (p.payEvery === 14) {
     const a = p.payDay ? addDays(isoToDate(p.payDay), -(p.payLag || 0) - 13) : isoToDate(FN_ANCHOR), k = Math.floor(dayDiff(iso(a), d) / 14), st = addDays(a, k * 14);
@@ -913,7 +916,7 @@ function placeGrossIn(w, p, from, to) {
   return g;
 }
 function workTotals(from, to) {
-  const w = ensureWork(), per = {}, unset = new Set(), bl = {}; let n = 0, gross = 0, net = 0;
+  const w = ensureWork(), per = {}, unset = new Set(), bl = {}; let n = 0, gross = 0, net = 0, taxAll = 0, sacAll = 0;
   for (const d in w.shifts) {
     if (d < from || d > to) continue;
     for (const key of w.shifts[d]) {
@@ -926,11 +929,11 @@ function workTotals(from, to) {
   }
   // Tax is worked out on the whole pay period, the way the employer withholds it. If only part of a period is in view, it gets that share of the tax.
   for (const id in per) {
-    const p = w.places.find(x => x.id === id); let tax = 0;
-    for (const bs in bl[id]) { const b = bl[id][bs], full = placeGrossIn(w, p, bs, b.be); if (full > 0) tax += periodTax(p, full, b.L) * b.g / full; }
-    per[id].tax = tax; per[id].net = per[id].gross - tax; net += per[id].net;
+    const p = w.places.find(x => x.id === id); let tax = 0, sac = 0;
+    for (const bs in bl[id]) { const b = bl[id][bs], full = placeGrossIn(w, p, bs, b.be); if (full > 0) { const sc = Math.min(sacFortnight(p) * b.L / 14, full), share = b.g / full; tax += periodTax(p, full - sc, b.L) * share; sac += sc * share; } }
+    per[id].tax = tax; per[id].sac = sac; per[id].net = per[id].gross - sac - tax; net += per[id].net; taxAll += tax; sacAll += sac;
   }
-  return { n, gross, net, tax: gross - net, per, unset: [...unset] };
+  return { n, gross, net, tax: taxAll, sac: sacAll, per, unset: [...unset] };
 }
 // ---- Pay cycle: paid every fortnight, the last payday was 21 Oct 2026. Fortnights run as two Mon-Sun weeks, starting Mon 19 Oct 2026. ----
 const PAY_ANCHOR = '2026-10-21', FN_ANCHOR = '2026-10-19';
@@ -964,7 +967,7 @@ function payListCard() {
   const span = (from, days) => { const to = iso(addDays(isoToDate(from), days - 1)); return { from, to, label: `${sh(isoToDate(from))} to ${sh(isoToDate(to))}`, t: workTotals(from, to) }; };
   const line = (r, big, tag) => h('div', { class: 'wk' + (big ? '' : ' sub'), style: big ? '' : 'margin-left:14px;opacity:.9' },
     h('div', { style: 'min-width:0' }, h('b', {}, r.label + (tag ? ` · ${tag}` : '')),
-      h('div', { class: 'mute small' }, r.t.n ? `Before tax ${money(r.t.gross)} · tax ${money(r.t.tax)} · ${r.t.n} shift${r.t.n === 1 ? '' : 's'}` : 'No shifts ticked')),
+      h('div', { class: 'mute small' }, r.t.n ? `Before tax ${money(r.t.gross)}${r.t.sac > 0.5 ? ` · sacrificed ${money(r.t.sac)}` : ''} · tax ${money(r.t.tax)} · ${r.t.n} shift${r.t.n === 1 ? '' : 's'}` : 'No shifts ticked')),
     h('div', { style: 'text-align:right' }, h('b', { class: r.t.n ? 'mint' : 'mute' }, money(r.t.net)), h('div', { class: 'mute small' }, 'after tax')));
   const rows = [];
   for (let i = -2; i <= 3; i++) {
@@ -1099,7 +1102,7 @@ function shiftsView() {
     h('div', { class: 'sec', style: 'margin-bottom:6px' }, h('h2', {}, 'Shifts'),
       h('div', { class: 'monthnav', style: 'margin:6px 0 10px' }, h('button', { 'aria-label': 'Previous week', onclick: () => { weekOff--; render(); } }, '‹'), h('b', {}, weekOff === 0 ? `This week · ${title}` : title), h('button', { 'aria-label': 'Next week', onclick: () => { weekOff++; render(); } }, '›')),
       h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-end;gap:12px' }, h('div', {}, h('div', { class: 'mute small' }, 'Expected this week'), figEl),
-        h('div', { class: 'mute small', style: 'text-align:right' }, `${tot.n} shift${tot.n === 1 ? '' : 's'}`, h('br'), `${sd.toLocaleDateString('en-AU', { month: 'long' })}: ${money(mTot.gross)}`)), tot.tax > 0.5 && h('div', { class: 'mute small', style: 'margin-top:8px' }, `After tax about ${money(tot.net)} (tax ${money(tot.tax)}). ${sd.toLocaleDateString('en-AU', { month: 'long' })} after tax: ${money(mTot.net)}.`)),
+        h('div', { class: 'mute small', style: 'text-align:right' }, `${tot.n} shift${tot.n === 1 ? '' : 's'}`, h('br'), `${sd.toLocaleDateString('en-AU', { month: 'long' })}: ${money(mTot.gross)}`)), (tot.tax > 0.5 || tot.sac > 0.5) && h('div', { class: 'mute small', style: 'margin-top:8px' }, `After tax about ${money(tot.net)} (tax ${money(tot.tax)}${tot.sac > 0.5 ? `, salary sacrifice ${money(tot.sac)}` : ''}). ${sd.toLocaleDateString('en-AU', { month: 'long' })} after tax: ${money(mTot.net)}.`)),
     h('div', { class: 'dchips' }, chips),
     h('div', { style: 'display:flex;justify-content:space-between;margin:0 0 8px' }, h('span', { class: 'mute small' }, sd.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · tap to tick'), h('b', { class: dayPay > 0 ? 'mint' : 'mute' }, dayPay > 0 ? money(dayPay) : '')),
     h('div', { class: 'bigopts' }, tiles),
@@ -1182,7 +1185,7 @@ function payInfo(p) {
   const today = isoToDate(iso(new Date())), step = p.payEvery; let pay = isoToDate(p.payDay);
   const n = Math.ceil((today - pay) / (86400000 * step)); if (n > 0) pay = addDays(pay, n * step);
   const end = addDays(pay, -(p.payLag || 0)), start = addDays(end, -(step - 1)), t = workTotals(iso(start), iso(end)), o = t.per[p.id] || { n: 0, gross: 0 };
-  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, gross: o.gross, amount: o.gross - periodTax(p, o.gross, step === 14 ? 14 : 7) };
+  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, gross: o.gross, amount: o.gross - Math.min(sacFortnight(p) * step / 14, o.gross) - periodTax(p, o.gross - Math.min(sacFortnight(p) * step / 14, o.gross), step === 14 ? 14 : 7) };
 }
 
 // ---------- 9am reminder ----------
@@ -1222,6 +1225,14 @@ function reminderPanel() {
 }
 
 // Settings: pick how tax is taken out for each workplace.
+function sacPanel() {
+  const w = ensureWork(), ps = w.places.filter(p => p.types.length);
+  return h('div', { class: 'panel' }, h('h2', {}, 'Salary sacrifice'),
+    h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Amounts taken from each fortnightly pay before tax (for example through Maxxia). They lower the tax and the pay you take home. Set 0 to turn one off. Packaging has yearly caps, so check with Maxxia that your amounts are inside them.'),
+    ps.map(p => { if (!p.sac) p.sac = []; return h('div', {}, h('b', {}, p.name),
+      p.sac.map(x => { const inp = numIn(x.amount); inp.addEventListener('change', async () => { x.amount = nv(inp); await save(); render(); }); return field(`${x.name}, per fortnight`, inp); }),
+      h('div', { style: 'margin:6px 0 14px' }, h('button', { class: 'btn', style: 'height:38px', onclick: async () => { const nm = prompt('Name of the sacrifice, e.g. Car lease'); if (!nm) return; const a = parseFloat(prompt('Amount per fortnight in dollars')); if (!(a >= 0)) return; p.sac.push({ name: nm.trim(), amount: a }); await save(); render(); } }, `Add one for ${p.name}`))); }));
+}
 function taxPanel() {
   const w = ensureWork(), val = p => p.taxMode === 'ato' ? (p.tft ? 'ato-yes' : 'ato-no') : p.taxMode === 'flat' && p.tax > 0 ? 'flat' : 'none';
   const row = p => {
@@ -1277,7 +1288,8 @@ function settingsView() {
         }
       }, 'Restore backup')),
     taxPanel(),
-    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (d). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
+    sacPanel(),
+    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (e). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
