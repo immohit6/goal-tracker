@@ -326,7 +326,7 @@ async function bioUnlock() {
 const BK = 'gt_lastbackup_v1', BACKUP_DAYS = 7, BACKUP_DAYS_RISKY = 2;
 let persisted = null; // true: iOS/browser promised not to evict. false: it may. null: not checked yet.
 const backupLimit = () => persisted === true ? BACKUP_DAYS : BACKUP_DAYS_RISKY;
-let bannerHidden = false;
+let bannerHidden = false, payHidden = false;
 const lastBackup = () => { try { return parseInt(localStorage.getItem(BK), 10) || 0; } catch (e) { return 0; } };
 function backupAge() { const t = lastBackup(); return t ? Math.floor((Date.now() - t) / 86400000) : null; }
 function needsBackup() { if (!db || (!db.tx.length && !db.goal)) return false; const a = backupAge(); return a === null || a >= backupLimit(); }
@@ -374,7 +374,7 @@ function bioPanel() {
       catch (e) { flash(e && e.name === 'NotAllowedError' ? 'Face ID was cancelled.' : (e && e.message) || 'Could not turn on Face ID.'); }
     } }, on ? 'Turn off Face ID' : 'Turn on Face ID'));
 }
-function lock() { bannerHidden = false; curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
+function lock() { bannerHidden = false; payHidden = false; curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
 let idleT;
 function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
 ['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
@@ -514,7 +514,7 @@ function goalStats() {
 }
 
 // ---------- ui state ----------
-let tab = 'goal', undo = null, period = 'month', scope = 'all', draft = { scope: 'personal', type: 'expense' };
+let tab = 'goal', undo = null, period = 'month', scope = 'all', draft = { scope: 'personal', type: 'income' }, addDate = null;
 let editGoal = false, lockErr = '', intro = false, kbd = null, busy = false, queueTotal = 0, toastT;
 function flash(m) {
   render();
@@ -718,9 +718,9 @@ function approveView() {
 }
 
 function addView() {
-  const type = draft.type;
+  const type = 'income';
   const amt = h('input', { type: 'number', min: '0', step: '0.01', placeholder: '0.00', inputmode: 'decimal', 'aria-label': 'Amount' });
-  const date = h('input', { type: 'date', value: iso(new Date()) });
+  const date = h('input', { type: 'date', value: addDate || iso(new Date()) }); addDate = null;
   const desc = h('input', { placeholder: 'Optional, e.g. lunch' });
   const cat = h('select', {}, (type === 'income' ? INCOME_CATS : EXPENSE_CATS).map(c => h('option', { value: c }, c)));
   const toggle = (key, val) => () => { draft[key] = val; render(); };
@@ -733,10 +733,7 @@ function addView() {
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) { file.files = e.dataTransfer.files; fname.textContent = file.files[0].name; } });
   return h('div', {},
-    h('div', { class: 'sec' }, h('h2', {}, 'Add a transaction'), h('p', { class: 'mute' }, 'Entries you type are approved straight away.')),
-    h('div', { class: 'seg', style: 'margin-bottom:16px' },
-      h('button', { class: type === 'expense' ? 'on exp' : '', onclick: toggle('type', 'expense') }, 'Expense'),
-      h('button', { class: type === 'income' ? 'on inc' : '', onclick: toggle('type', 'income') }, 'Income')),
+    h('div', { class: 'sec' }, h('h2', {}, 'Add income'), h('p', { class: 'mute' }, 'Add your pay once a fortnight. Entries you type are approved straight away.')),
     h('div', { class: 'field' }, h('div', { class: 'moneyin' }, h('span', {}, '$'), amt)),
     field('Date', date), field('Description (optional)', desc), field('Category', cat),
     field('Belongs to', h('div', { class: 'seg' },
@@ -914,6 +911,32 @@ function workTotals(from, to) {
   for (const id in per) { const p = w.places.find(x => x.id === id); let tax = 0; for (const ws in wk[id]) tax += periodTax(p, wk[id][ws], 7); per[id].tax = tax; per[id].net = per[id].gross - tax; net += per[id].net; }
   return { n, gross, net, tax: gross - net, per, unset: [...unset] };
 }
+// ---- Pay cycle: paid every fortnight, the last payday was 21 Oct 2026. Fortnights run as two Mon-Sun weeks, starting Mon 19 Oct 2026. ----
+const PAY_ANCHOR = '2026-10-21', FN_ANCHOR = '2026-10-19';
+const dayDiff = (a, b) => Math.round((isoToDate(b) - isoToDate(a)) / 86400000);
+const fortnightStart = d => iso(addDays(isoToDate(FN_ANCHOR), Math.floor(dayDiff(FN_ANCHOR, d) / 14) * 14));
+function lastPayday() { const t = iso(new Date()); return iso(addDays(isoToDate(PAY_ANCHOR), Math.floor(dayDiff(PAY_ANCHOR, t) / 14) * 14)); }
+function incomeMissing() {
+  const p = lastPayday(), from = iso(addDays(isoToDate(p), -2));
+  return !approved().some(t => t.amount > 0 && t.scope === 'personal' && t.date >= from) ? p : null;
+}
+// Rows of expected pay, before and after tax, one per week or per fortnight.
+function periodRows(days, before, after) {
+  const today = iso(new Date()), cur = days === 7 ? weekStart(today) : fortnightStart(today), rows = [];
+  for (let i = -before; i <= after; i++) {
+    const from = iso(addDays(isoToDate(cur), i * days)), to = iso(addDays(isoToDate(from), days - 1)), t = workTotals(from, to);
+    const f = isoToDate(from), l = isoToDate(to), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
+    rows.push({ now: i === 0, label: `${sh(f)} to ${sh(l)}`, n: t.n, gross: t.gross, tax: t.tax, net: t.net });
+  }
+  return rows;
+}
+function periodCard(title, days, before, after, nowWord) {
+  return h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, title),
+    periodRows(days, before, after).map(r => h('div', { class: 'wk' + (r.now ? ' now' : '') },
+      h('div', { style: 'min-width:0' }, h('b', {}, r.label + (r.now ? ` · ${nowWord}` : '')),
+        h('div', { class: 'mute small' }, r.n ? `Before tax ${money(r.gross)} · tax ${money(r.tax)} · ${r.n} shift${r.n === 1 ? '' : 's'}` : 'No shifts ticked')),
+      h('div', { style: 'text-align:right' }, h('b', { class: r.n ? 'mint' : 'mute' }, money(r.net)), h('div', { class: 'mute small' }, 'after tax')))));
+}
 const weekDates = off => { const t = addDays(new Date(), off * 7); const mon = addDays(t, -((t.getDay() + 6) % 7)); return [...Array(7)].map((_, i) => iso(addDays(mon, i))); };
 const curKey = () => ek(brush, brushType);
 async function fillShifts(dates) {
@@ -1050,6 +1073,8 @@ function shiftsView() {
       tot.n > 0 && h('button', { class: 'btn', style: 'flex:1', onclick: async () => { if (!confirm('Untick every shift this week?')) return; dates.forEach(d => { (w.shifts[d] || []).forEach(k => { if (w.amt) delete w.amt[d + '#' + k]; }); delete w.shifts[d]; }); await save(); render(); } }, 'Clear this week')),
     h('details', { class: 'panel', style: 'margin-top:14px' }, h('summary', { style: 'font-weight:650;cursor:pointer' }, 'Quick fill: tick many days at once'),
       h('p', { class: 'mute small', style: 'margin:8px 0 12px' }, 'Choose a shift and the weekdays you work, then a week.'), brushOpts),
+    periodCard('Income every fortnight', 14, 2, 3, 'this fortnight'),
+    periodCard('Income every week', 7, 3, 4, 'this week'),
     w.places.filter(p => tot.per[p.id]).length > 0 && h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'This week by workplace'),
       w.places.filter(p => tot.per[p.id]).map(p => h('div', { class: 'flowrow', style: 'margin-top:12px;grid-template-columns:104px 1fr auto' }, h('span', { class: 'mute small' }, `${p.name} · ${tot.per[p.id].n}`),
         h('div', { class: 'bar2' }, h('div', { style: `width:${tot.per[p.id].gross / peak * 100}%;background:${PCOL[idx(p.id) % 4]}` })), h('span', { class: 'small' }, money(tot.per[p.id].gross))))),
@@ -1139,11 +1164,26 @@ async function addReminder() {
     else download(name, text, 'text/calendar');
   } catch (e) { if (!(e && e.name === 'AbortError')) download(name, text, 'text/calendar'); }
 }
+// Repeating fortnightly event on payday (every 14 days from 21 Oct 2026) so the phone nags even when the app is closed.
+async function addPayReminder() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Goal Tracker//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', 'UID:pay-day-fortnightly@goal-tracker', 'DTSTAMP:' + stamp,
+    'DTSTART:' + PAY_ANCHOR.replace(/-/g, '') + 'T090000', 'DURATION:PT15M', 'RRULE:FREQ=WEEKLY;INTERVAL=2', 'SUMMARY:Pay day: add your income', 'DESCRIPTION:Open Goal Tracker and add this fortnight\'s pay.',
+    'URL:https://immohit6.github.io/goal-tracker/', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Pay day: add your income', 'TRIGGER:PT0S', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+  const name = 'pay-day-reminder.ics', file = new File([text], name, { type: 'text/calendar' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: 'Pay day reminder' });
+    else download(name, text, 'text/calendar');
+  } catch (e) { if (!(e && e.name === 'AbortError')) download(name, text, 'text/calendar'); }
+}
 function reminderPanel() {
   return h('div', { class: 'panel' }, h('h2', {}, 'Daily 9am reminder'),
     h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'This app cannot send notifications by itself, because it never connects to a server. Instead, add a repeating 9am event to your Calendar. It alerts you every day and links back to the app.'),
     h('button', { class: 'btn primary', onclick: addReminder }, 'Add 9am reminder to Calendar'),
-    h('p', { class: 'mute small', style: 'margin-top:10px' }, 'Tap Calendar in the share sheet, then Add. To change the time later, edit the event in Calendar.'));
+    h('p', { class: 'mute small', style: 'margin-top:10px' }, 'Tap Calendar in the share sheet, then Add. To change the time later, edit the event in Calendar.'),
+    h('div', { style: 'height:14px' }),
+    h('button', { class: 'btn primary', onclick: addPayReminder }, 'Add fortnightly pay day reminder'),
+    h('p', { class: 'mute small', style: 'margin-top:10px' }, 'Repeats every second Wednesday from 21 Oct 2026 at 9am. The app also shows a banner when pay day passes and no income is added.'));
 }
 
 function settingsView() {
@@ -1184,7 +1224,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 7 Oct 2026, after-tax pay. If you see an older screen, close the app completely and reopen it.'),
+    h('p', { class: 'mute small', style: 'margin:0 0 16px' }, 'Version: 23 Oct 2026, weekly and fortnightly pay, income-only Add. If you see an older screen, close the app completely and reopen it.'),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
@@ -1207,10 +1247,14 @@ function render() {
   const banner = (needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
     h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: backupNow }, 'Back up now'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { bannerHidden = true; render(); } }, 'Later'))) : null;
+  const missing = (!payHidden && tab !== 'add') ? incomeMissing() : null;
+  const payBanner = missing ? h('div', { class: 'banner' },
+    h('div', {}, h('b', {}, missing === iso(new Date()) ? 'Pay day today' : 'Pay day was ' + niceDate(missing)), h('p', { class: 'mute small' }, 'Your income for this fortnight has not been added yet.')),
+    h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: () => { addDate = missing; tab = 'add'; window.scrollTo(0, 0); render(); } }, 'Add income'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { payHidden = true; render(); } }, 'Later'))) : null;
   app.append(h('div', { class: 'wrap' },
     h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today))),
       h('button', { class: 'ghost', onclick: lock, 'aria-label': 'Lock the app' }, icon('lock', 16), 'Lock')),
-    banner, view));
+    payBanner, banner, view));
   app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: (tab === k || (k === 'goal' && tab === 'review')) ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
     icon(ic, 21), l, k === 'approve' && pend > 0 && h('span', { class: 'badge' }, pend)))));
   requestAnimationFrame(() => requestAnimationFrame(() => {
