@@ -746,23 +746,7 @@ function addView() {
         db.tx.push({ id: uid(), date: date.value, desc: desc.value.trim() || cat.value, amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope });
         await save(); flash('Transaction added.');
       }
-    }, 'Add transaction'),
-    h('div', { class: 'panel', style: 'margin-top:30px' }, h('h2', {}, 'Import a bank CSV'),
-      h('p', { class: 'mute small' }, 'The file is read in your browser and never uploaded. Each row goes to Approve for review. Duplicates are skipped.'),
-      drop,
-      h('label', { style: 'display:flex;gap:10px;align-items:center;margin:4px 0 16px;color:var(--mute);font-size:14px' }, flip, 'Flip signs (use this if expenses show as positive)'),
-      h('button', {
-        class: 'btn primary', onclick: () => {
-          const f = file.files[0]; if (!f) return flash('Choose a CSV file first.');
-          const rd = new FileReader();
-          rd.onload = async () => {
-            const r = importCSV(String(rd.result), flip.checked);
-            if (r.error) return flash(r.error);
-            await save(); tab = 'approve'; flash(`Imported ${r.added} to review. Skipped ${r.dupes} duplicates and ${r.bad} unreadable rows.`);
-          };
-          rd.readAsText(f);
-        }
-      }, 'Import file')));
+    }, 'Add transaction'));
 }
 
 const PAL = ['#2446d8', '#0f9d6e', '#e0a43a', '#d6453d', '#8a63d2', '#2fb5c9', '#e07b3a', '#7a8a99'];
@@ -1254,7 +1238,7 @@ function render() {
   const app = $('#app'); app.replaceChildren();
   if (!db) { kbd = null; app.append(lockView()); return; }
   const pend = db.tx.filter(t => t.status === 'pending').length;
-  const tabs = [['goal', 'Goal', 'target'], ['approve', 'Approve', 'check'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
+  const tabs = [['goal', 'Goal', 'target'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
   const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, review: reviewView, report: reportView, settings: settingsView }[tab]();
   const age = backupAge();
