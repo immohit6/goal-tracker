@@ -1289,7 +1289,7 @@ function settingsView() {
       }, 'Restore backup')),
     taxPanel(),
     sacPanel(),
-    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (e). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 24 Oct 2026. If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
@@ -1305,7 +1305,7 @@ function render() {
   const app = $('#app'); app.replaceChildren();
   if (!db) { kbd = null; app.append(lockView()); return; }
   const pend = db.tx.filter(t => t.status === 'pending').length;
-  const tabs = [['goal', 'Goal', 'target'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['report', 'Report', 'chart'], ['settings', 'Settings', 'sliders']];
+  const tabs = [['goal', 'Goal', 'target'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
   const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, review: reviewView, report: reportView, settings: settingsView }[tab]();
   const age = backupAge();
