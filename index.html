@@ -1221,6 +1221,23 @@ function reminderPanel() {
     h('p', { class: 'mute small', style: 'margin-top:10px' }, 'Repeats every second Wednesday from 21 Oct 2026 at 9am. The app also shows a banner when pay day passes and no income is added.'));
 }
 
+// Settings: pick how tax is taken out for each workplace.
+function taxPanel() {
+  const w = ensureWork(), val = p => p.taxMode === 'ato' ? (p.tft ? 'ato-yes' : 'ato-no') : p.taxMode === 'flat' && p.tax > 0 ? 'flat' : 'none';
+  const row = p => {
+    const sel = h('select', {}, [['none', 'No tax taken out'], ['ato-yes', 'ATO tables, tax-free threshold: YES'], ['ato-no', 'ATO tables, tax-free threshold: NO'], ...(val(p) === 'flat' ? [['flat', `Flat ${p.tax}% (change under Shifts, Edit)`]] : [])].map(([v, l]) => h('option', { value: v }, l)));
+    sel.value = val(p);
+    sel.addEventListener('change', async () => {
+      if (sel.value === 'none') p.taxMode = 'none'; else if (sel.value !== 'flat') { p.taxMode = 'ato'; p.tft = sel.value === 'ato-yes'; }
+      await save(); flash(`${p.name} tax updated.`); render();
+    });
+    return field(p.name, sel);
+  };
+  return h('div', { class: 'panel' }, h('h2', {}, 'Tax for each job'),
+    h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Choose how each job takes tax out. Say YES to the tax-free threshold at one job only, the one where you claimed it on your tax form.'),
+    w.places.map(row));
+}
+
 function settingsView() {
   const np = h('input', { type: 'password', placeholder: 'New passcode (8+ characters)', autocomplete: 'off' });
   const bk = h('input', { type: 'file', accept: '.json' });
@@ -1259,7 +1276,8 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (c). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
+    taxPanel(),
+    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (d). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
