@@ -616,6 +616,16 @@ function safeCard(s) {
   return h('div', { class: 'sec' }, h('h2', {}, 'Safe to spend today'), body);
 }
 
+// Expected pay from your ticked shifts: this week, this fortnight and this month, before and after tax.
+function payTable() {
+  const now = new Date(), today = iso(now), wd = weekDates(0), fs = fortnightStart(today), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
+  const rows = [['This week', wd[0], wd[6]], ['This fortnight', fs, iso(addDays(isoToDate(fs), 13))], ['This month', iso(new Date(now.getFullYear(), now.getMonth(), 1)), iso(new Date(now.getFullYear(), now.getMonth() + 1, 0))]];
+  const cell = (v, cls) => h('div', { style: 'text-align:right', class: cls || '' }, money(v));
+  const head = ['', 'Before tax', 'Tax', 'After tax'].map((t, i) => h('div', { class: 'mute small', style: i ? 'text-align:right' : '' }, t));
+  const body = rows.flatMap(([lb, a, b]) => { const t = workTotals(a, b); return [h('div', {}, h('b', {}, lb), h('div', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`)), cell(t.gross), cell(t.tax, 'mute'), h('b', { style: 'text-align:right', class: 'mint' }, money(t.net))]; });
+  return h('div', { style: 'display:grid;grid-template-columns:1.3fr 1fr .8fr 1fr;gap:10px 6px;align-items:center;margin:10px 0 14px;font-size:14px' }, head, body);
+}
+
 let incPeriod = 'month';
 // Expected income (the shifts you ticked) beside actual income (approved transactions) for the same period.
 function incomeCard() {
@@ -629,7 +639,7 @@ function incomeCard() {
   const gap = worked.net - actual;
   const msg = exp.n === 0 ? 'Tick the shifts you work in the Shifts tab to see what to expect.'
     : gap > 0.5 ? `${money(gap)} of the pay for shifts you have already worked has not shown up yet.` : gap < -0.5 ? `Your actual income is ${money(-gap)} above the shifts worked so far.` : 'Your actual income matches the shifts worked so far.';
-  return h('div', { class: 'sec' }, h('h2', {}, 'Income'),
+  return h('div', { class: 'sec' }, h('h2', {}, 'Income'), payTable(),
     pills([['month', 'This month'], ['week', 'This week']], incPeriod, v => { incPeriod = v; render(); }),
     bar('Expected', expected, 'var(--cobalt)'), bar('Actual', actual, 'var(--mint)'),
     h('p', { class: gap > 0.5 && exp.n ? 'amber small' : 'mute small' }, msg),
@@ -881,19 +891,37 @@ function periodTax(p, gross, days) {
   return atoWeekly(gross * 7 / days, p.tft) * days / 7;
 }
 const weekStart = d => { const x = isoToDate(d); return iso(addDays(x, -((x.getDay() + 6) % 7))); };
+// The pay period a date falls in for one workplace. Paid fortnightly: the 14 days that end `lag` days before payday. Otherwise the Mon-Sun week.
+function periodOf(p, d) {
+  if (p.payEvery === 14) {
+    const a = p.payDay ? addDays(isoToDate(p.payDay), -(p.payLag || 0) - 13) : isoToDate(FN_ANCHOR), k = Math.floor(dayDiff(iso(a), d) / 14), st = addDays(a, k * 14);
+    return [iso(st), iso(addDays(st, 13)), 14];
+  }
+  const st = weekStart(d); return [st, iso(addDays(isoToDate(st), 6)), 7];
+}
+function placeGrossIn(w, p, from, to) {
+  let g = 0;
+  for (const d in w.shifts) { if (d < from || d > to) continue; for (const key of w.shifts[d]) { const [id, t] = ekParse(key); if (id === p.id) g += entryPay(w, d, key, p, t); } }
+  return g;
+}
 function workTotals(from, to) {
-  const w = ensureWork(), per = {}, unset = new Set(), wk = {}; let n = 0, gross = 0, net = 0;
+  const w = ensureWork(), per = {}, unset = new Set(), bl = {}; let n = 0, gross = 0, net = 0;
   for (const d in w.shifts) {
     if (d < from || d > to) continue;
     for (const key of w.shifts[d]) {
       const [id, t] = ekParse(key), p = w.places.find(x => x.id === id); if (!p) continue;
-      const g = entryPay(w, d, key, p, t); n++; gross += g; const wb = wk[id] || (wk[id] = {}), ws = weekStart(d); wb[ws] = (wb[ws] || 0) + g;
+      const g = entryPay(w, d, key, p, t); n++; gross += g;
+      const [bs, be, L] = periodOf(p, d), bb = bl[id] || (bl[id] = {}), b = bb[bs] || (bb[bs] = { be, L, g: 0 }); b.g += g;
       if (g === 0 && !(w.amt && w.amt[d + '#' + key] != null)) unset.add(entryLabel(p, typeOf(p, t) ? typeOf(p, t).name : null));
       const o = per[id] || (per[id] = { n: 0, gross: 0 }); o.n++; o.gross += g;
     }
   }
-  // Tax is worked out week by week for each workplace, the way a payslip does it.
-  for (const id in per) { const p = w.places.find(x => x.id === id); let tax = 0; for (const ws in wk[id]) tax += periodTax(p, wk[id][ws], 7); per[id].tax = tax; per[id].net = per[id].gross - tax; net += per[id].net; }
+  // Tax is worked out on the whole pay period, the way the employer withholds it. If only part of a period is in view, it gets that share of the tax.
+  for (const id in per) {
+    const p = w.places.find(x => x.id === id); let tax = 0;
+    for (const bs in bl[id]) { const b = bl[id][bs], full = placeGrossIn(w, p, bs, b.be); if (full > 0) tax += periodTax(p, full, b.L) * b.g / full; }
+    per[id].tax = tax; per[id].net = per[id].gross - tax; net += per[id].net;
+  }
   return { n, gross, net, tax: gross - net, per, unset: [...unset] };
 }
 // ---- Pay cycle: paid every fortnight, the last payday was 21 Oct 2026. Fortnights run as two Mon-Sun weeks, starting Mon 19 Oct 2026. ----
@@ -1223,7 +1251,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026. If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (b). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
