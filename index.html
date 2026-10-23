@@ -937,6 +937,21 @@ function periodCard(title, days, before, after, nowWord) {
         h('div', { class: 'mute small' }, r.n ? `Before tax ${money(r.gross)} · tax ${money(r.tax)} · ${r.n} shift${r.n === 1 ? '' : 's'}` : 'No shifts ticked')),
       h('div', { style: 'text-align:right' }, h('b', { class: r.n ? 'mint' : 'mute' }, money(r.net)), h('div', { class: 'mute small' }, 'after tax')))));
 }
+// One list: every fortnight with its two weeks nested underneath, before and after tax.
+function payListCard() {
+  const today = iso(new Date()), cur = fortnightStart(today), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
+  const span = (from, days) => { const to = iso(addDays(isoToDate(from), days - 1)); return { from, to, label: `${sh(isoToDate(from))} to ${sh(isoToDate(to))}`, t: workTotals(from, to) }; };
+  const line = (r, big, tag) => h('div', { class: 'wk' + (big ? '' : ' sub'), style: big ? '' : 'margin-left:14px;opacity:.9' },
+    h('div', { style: 'min-width:0' }, h('b', {}, r.label + (tag ? ` · ${tag}` : '')),
+      h('div', { class: 'mute small' }, r.t.n ? `Before tax ${money(r.t.gross)} · tax ${money(r.t.tax)} · ${r.t.n} shift${r.t.n === 1 ? '' : 's'}` : 'No shifts ticked')),
+    h('div', { style: 'text-align:right' }, h('b', { class: r.t.n ? 'mint' : 'mute' }, money(r.t.net)), h('div', { class: 'mute small' }, 'after tax')));
+  const rows = [];
+  for (let i = -2; i <= 3; i++) {
+    const from = iso(addDays(isoToDate(cur), i * 14)), f = span(from, 14), w1 = span(from, 7), w2 = span(iso(addDays(isoToDate(from), 7)), 7);
+    rows.push(h('div', { style: 'margin-top:14px' }, line(f, true, i === 0 ? 'this fortnight' : ''), line(w1, false, w1.from <= today && today <= w1.to ? 'this week' : ''), line(w2, false, w2.from <= today && today <= w2.to ? 'this week' : '')));
+  }
+  return h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'Income by fortnight and week'), rows);
+}
 const weekDates = off => { const t = addDays(new Date(), off * 7); const mon = addDays(t, -((t.getDay() + 6) % 7)); return [...Array(7)].map((_, i) => iso(addDays(mon, i))); };
 const curKey = () => ek(brush, brushType);
 async function fillShifts(dates) {
@@ -1073,8 +1088,7 @@ function shiftsView() {
       tot.n > 0 && h('button', { class: 'btn', style: 'flex:1', onclick: async () => { if (!confirm('Untick every shift this week?')) return; dates.forEach(d => { (w.shifts[d] || []).forEach(k => { if (w.amt) delete w.amt[d + '#' + k]; }); delete w.shifts[d]; }); await save(); render(); } }, 'Clear this week')),
     h('details', { class: 'panel', style: 'margin-top:14px' }, h('summary', { style: 'font-weight:650;cursor:pointer' }, 'Quick fill: tick many days at once'),
       h('p', { class: 'mute small', style: 'margin:8px 0 12px' }, 'Choose a shift and the weekdays you work, then a week.'), brushOpts),
-    periodCard('Income every fortnight', 14, 2, 3, 'this fortnight'),
-    periodCard('Income every week', 7, 3, 4, 'this week'),
+    payListCard(),
     w.places.filter(p => tot.per[p.id]).length > 0 && h('div', { class: 'sec', style: 'margin-top:22px' }, h('h2', {}, 'This week by workplace'),
       w.places.filter(p => tot.per[p.id]).map(p => h('div', { class: 'flowrow', style: 'margin-top:12px;grid-template-columns:104px 1fr auto' }, h('span', { class: 'mute small' }, `${p.name} · ${tot.per[p.id].n}`),
         h('div', { class: 'bar2' }, h('div', { style: `width:${tot.per[p.id].gross / peak * 100}%;background:${PCOL[idx(p.id) % 4]}` })), h('span', { class: 'small' }, money(tot.per[p.id].gross))))),
