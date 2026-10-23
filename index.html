@@ -623,7 +623,15 @@ function payTable() {
   const cell = (v, cls) => h('div', { style: 'text-align:right', class: cls || '' }, money(v));
   const head = ['', 'Before tax', 'Tax', 'After tax'].map((t, i) => h('div', { class: 'mute small', style: i ? 'text-align:right' : '' }, t));
   const body = rows.flatMap(([lb, a, b]) => { const t = workTotals(a, b); return [h('div', {}, h('b', {}, lb), h('div', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`)), cell(t.gross), cell(t.tax, 'mute'), h('b', { style: 'text-align:right', class: 'mint' }, money(t.net))]; });
-  return h('div', { style: 'display:grid;grid-template-columns:1.3fr 1fr .8fr 1fr;gap:10px 6px;align-items:center;margin:10px 0 14px;font-size:14px' }, head, body);
+  // Hourly workplaces with shifts but no tax set up are why Before and After tax can match. Offer a one-tap fix.
+  const w = ensureWork(), mt = workTotals(rows[2][1], rows[2][2]);
+  const notax = w.places.filter(p => mt.per[p.id] && p.types.length && !(p.taxMode === 'ato' || (p.taxMode === 'flat' && p.tax > 0)));
+  const fix = notax.map(p => h('div', { class: 'note warn', style: 'margin-bottom:10px' }, h('b', {}, `${p.name} has no tax set`),
+    h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'So its before and after tax amounts are the same. Pick how your payslip taxes it:'),
+    h('div', { class: 'btns' },
+      h('button', { class: 'btn primary', style: 'height:40px', onclick: async () => { p.taxMode = 'ato'; p.tft = true; await save(); render(); } }, 'ATO, tax-free threshold'),
+      h('button', { class: 'btn', style: 'height:40px', onclick: async () => { p.taxMode = 'ato'; p.tft = false; await save(); render(); } }, 'ATO, no threshold'))));
+  return h('div', {}, h('div', { style: 'display:grid;grid-template-columns:1.3fr 1fr .8fr 1fr;gap:10px 6px;align-items:center;margin:10px 0 14px;font-size:14px' }, head, body), fix);
 }
 
 let incPeriod = 'month';
@@ -1251,7 +1259,7 @@ function settingsView() {
           restoreFrom(bk.files[0], render);
         }
       }, 'Restore backup')),
-    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (b). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
+    h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 23 Oct 2026 (c). If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
 }
