@@ -656,16 +656,21 @@ function incomeCard() {
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
 
-// Home page: only the week that is running now, before and after tax. No past weeks, fortnight or month.
+// Home page: only the fortnight that is running now, before and after tax.
 function weekHome() {
-  const wd = weekDates(0), fs = fortnightStart(iso(new Date())), fe = iso(addDays(isoToDate(fs), 13)), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
-  const big = (label, v, cls) => h('div', { style: 'flex:1;min-width:0' }, h('div', { class: 'mute small' }, label), h('div', { class: 'safefig ' + (cls || '') }, money(v)));
-  const block = (title, a, b, first) => { const t = workTotals(a, b);
-    return h('div', { class: 'sec', style: first ? '' : 'margin-top:22px' }, h('h2', {}, title), h('p', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`),
-      h('div', { style: 'display:flex;gap:16px;margin-top:14px' }, big('Before tax', t.gross), big('After tax', t.net, 'mint')),
-      t.n === 0 && h('p', { class: 'mute small', style: 'margin-top:12px' }, 'No shifts ticked yet. Tick them in the Shifts tab.')); };
-  return h('div', {}, block('This week', wd[0], wd[6], true), block('This fortnight', fs, fe),
-    h('button', { class: 'btn', style: 'margin-top:18px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
+  const fs = fortnightStart(iso(new Date())), fe = iso(addDays(isoToDate(fs), 13)), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
+  const t = workTotals(fs, fe), taken = Math.max(0, t.gross - t.net);
+  const fig = h('div', { class: 'fig', style: 'color:var(--mint)' }, money(t.net));
+  const row = (label, v, strong) => h('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;padding:13px 0;border-top:1px solid var(--hero-line)' },
+    h('span', { style: 'color:var(--hero-mute);font-size:15px' }, label), h('span', { style: `font-size:${strong ? 26 : 20}px;font-weight:${strong ? 500 : 400};letter-spacing:-.02em;font-variant-numeric:tabular-nums` }, money(v)));
+  return h('div', {},
+    h('div', { class: 'hero' },
+      h('div', { class: 'name', style: 'text-transform:uppercase;letter-spacing:.08em;font-size:12px' }, 'This fortnight'),
+      h('div', { class: 'name', style: 'margin-top:2px' }, `${sh(isoToDate(fs))} to ${sh(isoToDate(fe))}`),
+      h('div', { class: 'figrow', style: 'margin:18px 0 4px;flex-direction:column;align-items:flex-start;gap:6px' }, fig, h('div', { class: 'of' }, 'after tax')),
+      h('div', { style: 'margin-top:22px' }, row('Before tax', t.gross, true), row('Tax and deductions', taken)),
+      t.n === 0 && h('p', { class: 'name', style: 'margin-top:12px' }, 'No shifts ticked for this fortnight yet.')),
+    h('button', { class: 'btn', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
 
 function goalView() {
