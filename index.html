@@ -379,7 +379,7 @@ function lock() { bannerHidden = false; payHidden = false; curPass = null; db = 
 let idleT;
 function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
 ['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
-async function save() { try { await persist(); } catch (e) { flash('Could not save: ' + e.message); } }
+async function save() { try { await persist(); return true; } catch (e) { flash('Could not save: ' + e.message); return false; } }
 
 // ---------- categories & suggestions ----------
 const INCOME_CATS = ['Salary', 'Business income', 'Other income'];
@@ -781,10 +781,27 @@ function addView() {
       class: 'btn primary', style: 'width:100%', onclick: async () => {
         const a = parseFloat(amt.value);
         if (!(a > 0) || !date.value) return flash('Enter an amount and a date.');
-        db.tx.push({ id: uid(), date: date.value, desc: desc.value.trim() || cat.value, amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope });
-        await save(); flash('Transaction added.');
+        const tx = { id: uid(), date: date.value, desc: desc.value.trim() || cat.value, amount: type === 'income' ? a : -a, status: 'approved', category: cat.value, scope: draft.scope, loggedAt: Date.now() };
+        db.tx.push(tx);
+        if (!(await save())) { db.tx.splice(db.tx.indexOf(tx), 1); return flash('Not saved, so nothing was added. Try again.'); }
+        flash('Saved. It is in your history below.');
       }
-    }, 'Add transaction'));
+    }, 'Add transaction'),
+    loggedHistory());
+}
+
+// Every entry you have logged, newest first, with the exact time you logged it.
+function loggedHistory() {
+  const list = db.tx.filter(t => t.status !== 'pending' || t.loggedAt).slice().sort((a, b) => (b.loggedAt || 0) - (a.loggedAt || 0) || (a.date < b.date ? 1 : -1));
+  const when = ms => new Date(ms).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  const total = list.reduce((n, t) => n + t.amount, 0);
+  return h('div', { class: 'sec', style: 'margin-top:28px' }, h('h2', {}, 'History'),
+    h('p', { class: 'mute small' }, list.length ? `${list.length} entr${list.length === 1 ? 'y' : 'ies'} logged, ${money(total)} in total. Newest first.` : 'Nothing logged yet. Everything you add shows up here with the date and time you logged it.'),
+    list.map(t => h('div', { style: 'display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:13px 0;border-top:1px solid var(--line)' },
+      h('div', { style: 'min-width:0' }, h('b', { style: 'display:block;overflow-wrap:anywhere' }, t.desc || t.category || 'Entry'),
+        h('div', { class: 'mute small' }, `${t.category ? t.category + ' · ' : ''}${t.scope === 'business' ? 'Business' : 'Personal'} · pay date ${niceDate(t.date)}`),
+        h('div', { class: 'mute small' }, t.loggedAt ? 'Logged ' + when(t.loggedAt) : 'Logged before times were recorded')),
+      h('b', { class: t.amount < 0 ? 'coral' : 'mint', style: 'white-space:nowrap;font-variant-numeric:tabular-nums' }, money(t.amount)))));
 }
 
 const PAL = ['#2446d8', '#0f9d6e', '#e0a43a', '#d6453d', '#8a63d2', '#2fb5c9', '#e07b3a', '#7a8a99'];
