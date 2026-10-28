@@ -912,13 +912,13 @@ const ek = (id, t) => t ? id + '|' + t : id;
 const ekParse = k => { const i = k.indexOf('|'); return i < 0 ? [k, null] : [k.slice(0, i), k.slice(i + 1)]; };
 const typeOf = (p, name) => p.types && p.types.length ? (p.types.find(t => t.name === name) || p.types[0]) : null;
 // Pay for one shift: the rate for that weekday times paid hours, but never less than the workplace minimum.
-function shiftPay(p, date, typeName) {
+function shiftPay(p, date, typeName, hrsOv) {
   const src = typeOf(p, typeName) || p, wd = isoToDate(date).getDay(); let r = src.rate || 0;
   if (wd === 6 && src.sat > 0) r = src.sat; if (wd === 0 && src.sun > 0) r = src.sun;
-  return Math.max((r + (p.extraHr || 0)) * (src.hours || 0) + (p.extraShift || 0), p.min || 0);
+  return Math.max((r + (p.extraHr || 0)) * (hrsOv != null ? hrsOv : (src.hours || 0)) + (p.extraShift || 0), p.min || 0);
 }
 // What you expect for one marked shift. A typed amount for that day replaces the calculated one.
-function entryPay(w, d, key, p, t) { const o = w.amt && w.amt[d + '#' + key]; return o != null ? o : shiftPay(p, d, t); }
+function entryPay(w, d, key, p, t) { const o = w.amt && w.amt[d + '#' + key]; if (o != null) return o; const m = w.tm && w.tm[d + '#' + key]; return shiftPay(p, d, t, m && m.hrs != null ? m.hrs : null); }
 const entryLabel = (p, t) => t ? `${p.name} ${t}` : p.name;
 // ---- Tax: ATO PAYG withholding, Schedule 1 weekly coefficients (published 17 Jun 2026, for 2026-27). Medicare levy is included; HELP is not. ----
 const ATO_S1 = [[188, .15, .15], [371, .2084, 11.0185], [515, .179, .1066], [932, .3227, 74.1674], [2246, .32, 71.6508], [3303, .39, 228.8816], [Infinity, .47, 493.1893]];
@@ -1028,8 +1028,25 @@ async function fillShifts(dates) {
 }
 async function toggleEntry(date, key) {
   const w = ensureWork(), a = w.shifts[date] || (w.shifts[date] = []), i = a.indexOf(key);
-  if (i >= 0) { a.splice(i, 1); if (w.amt) delete w.amt[date + '#' + key]; if (!a.length) delete w.shifts[date]; } else a.push(key);
+  if (i >= 0) { a.splice(i, 1); if (w.amt) delete w.amt[date + '#' + key]; if (w.tm) delete w.tm[date + '#' + key]; if (!a.length) delete w.shifts[date]; } else a.push(key);
   const y = window.scrollY; await save(); render(); window.scrollTo(0, y);
+}
+// Change the start, finish or paid hours of one planned shift. Pay follows the hours (unless you typed a dollar amount).
+function timeLine(w, date, o) {
+  const src = typeOf(o.p, o.t) || o.p, usual = src.hours || 0; if (!(usual > 0)) return null;
+  const k = date + '#' + o.key, m = (w.tm && w.tm[k]) || {}, cur = m.hrs != null ? m.hrs : usual;
+  const store = async patch => { w.tm = w.tm || {}; const n = { ...(w.tm[k] || {}), ...patch }; if (!n.from && !n.to && Math.abs((n.hrs != null ? n.hrs : usual) - usual) < 0.005) delete w.tm[k]; else w.tm[k] = n; if (w.amt) delete w.amt[k]; const y = window.scrollY; await save(); render(); window.scrollTo(0, y); };
+  const tIn = (v, lab) => { const i = h('input', { type: 'time', value: v || '', 'aria-label': lab + ' for ' + o.label, style: 'min-width:0' }); return i; };
+  const from = tIn(m.from, 'Start'), to = tIn(m.to, 'Finish');
+  const hrs = h('input', { type: 'number', inputmode: 'decimal', min: '0', max: '24', step: '0.25', value: String(Math.round(cur * 100) / 100), 'aria-label': 'Paid hours for ' + o.label });
+  const fromTo = () => { if (!from.value || !to.value) return store({ from: from.value || '', to: to.value || '' }); const [a, b] = [from.value, to.value].map(x => +x.slice(0, 2) * 60 + +x.slice(3, 5)); let d = b - a; if (d <= 0) d += 1440; return store({ from: from.value, to: to.value, hrs: Math.round(d / 60 * 100) / 100 }); };
+  from.addEventListener('change', fromTo); to.addEventListener('change', fromTo);
+  hrs.addEventListener('change', () => { const v = parseFloat(hrs.value); if (isNaN(v) || v < 0 || v > 24) return flash('Enter hours between 0 and 24.'); store({ hrs: v }); });
+  const lab = t => h('div', { class: 'mute small', style: 'margin-bottom:4px' }, t);
+  return h('div', { style: 'margin:2px 0 14px 19px;padding:10px 12px;border:1px solid var(--line);border-radius:12px' },
+    h('div', { style: 'display:grid;grid-template-columns:1fr 1fr 74px;gap:8px;align-items:end' }, h('div', {}, lab('Start'), from), h('div', {}, lab('Finish'), to), h('div', {}, lab('Paid hrs'), hrs)),
+    h('div', { class: 'mute small', style: 'margin-top:8px' }, `Usual ${usual}h. Set start and finish and the hours work themselves out. To take off an unpaid break, change Paid hrs.`),
+    (w.tm && w.tm[k]) && h('button', { class: 'ghost', style: 'margin-top:8px', onclick: async () => { delete w.tm[k]; const y = window.scrollY; await save(); render(); window.scrollTo(0, y); } }, 'Back to usual hours'));
 }
 // Every shift you can tick: one per workplace, or one per AM/PM type.
 function shiftOptions() { const w = ensureWork(), o = []; w.places.forEach((p, i) => { if (p.types.length) p.types.forEach(t => o.push({ key: ek(p.id, t.name), p, t: t.name, label: `${p.name} ${t.name}`, ci: i })); else o.push({ key: ek(p.id, null), p, t: null, label: p.name, ci: i }); }); return o; }
@@ -1104,7 +1121,7 @@ async function copyLastWeek() {
   const w = ensureWork(), cur = weekDates(weekOff), prev = weekDates(weekOff - 1); let n = 0;
   prev.forEach((pd, i) => (w.shifts[pd] || []).forEach(k => {
     const cd = cur[i], a = w.shifts[cd] || (w.shifts[cd] = []);
-    if (!a.includes(k)) { a.push(k); n++; const o = w.amt && w.amt[pd + '#' + k]; if (o != null) { w.amt = w.amt || {}; w.amt[cd + '#' + k] = o; } }
+    if (!a.includes(k)) { a.push(k); n++; const o = w.amt && w.amt[pd + '#' + k]; if (o != null) { w.amt = w.amt || {}; w.amt[cd + '#' + k] = o; } const m = w.tm && w.tm[pd + '#' + k]; if (m) { w.tm = w.tm || {}; w.tm[cd + '#' + k] = { ...m }; } }
   }));
   const y = window.scrollY; await save(); flash(n ? `Copied ${n} shift${n === 1 ? '' : 's'} from last week.` : 'Nothing new to copy from last week.'); render(); window.scrollTo(0, y);
 }
@@ -1142,10 +1159,10 @@ function shiftsView() {
     h('div', { class: 'dchips' }, chips),
     h('div', { style: 'display:flex;justify-content:space-between;margin:0 0 8px' }, h('span', { class: 'mute small' }, sd.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · tap to tick'), h('b', { class: dayPay > 0 ? 'mint' : 'mute' }, dayPay > 0 ? money(dayPay) : '')),
     h('div', { class: 'bigopts' }, tiles),
-    keys.length > 0 && h('div', { style: 'margin-top:10px' }, h('div', { class: 'mute small' }, 'Earn more or less than usual that day? Type the amount.'), opts.filter(o => keys.includes(o.key)).map(o => amountLine(w, selDate, o))),
+    keys.length > 0 && h('div', { style: 'margin-top:10px' }, h('div', { class: 'mute small' }, 'Worked different hours, or earned more or less than usual? Change the times or type the amount.'), opts.filter(o => keys.includes(o.key)).map(o => h('div', {}, amountLine(w, selDate, o), timeLine(w, selDate, o)))),
     h('div', { class: 'btns', style: 'margin-top:14px' },
       h('button', { class: 'btn', style: 'flex:1', onclick: copyLastWeek }, 'Copy last week'),
-      tot.n > 0 && h('button', { class: 'btn', style: 'flex:1', onclick: async () => { if (!confirm('Untick every shift this week?')) return; dates.forEach(d => { (w.shifts[d] || []).forEach(k => { if (w.amt) delete w.amt[d + '#' + k]; }); delete w.shifts[d]; }); await save(); render(); } }, 'Clear this week')),
+      tot.n > 0 && h('button', { class: 'btn', style: 'flex:1', onclick: async () => { if (!confirm('Untick every shift this week?')) return; dates.forEach(d => { (w.shifts[d] || []).forEach(k => { if (w.amt) delete w.amt[d + '#' + k]; if (w.tm) delete w.tm[d + '#' + k]; }); delete w.shifts[d]; }); await save(); render(); } }, 'Clear this week')),
     h('details', { class: 'panel', style: 'margin-top:14px' }, h('summary', { style: 'font-weight:650;cursor:pointer' }, 'Quick fill: tick many days at once'),
       h('p', { class: 'mute small', style: 'margin:8px 0 12px' }, 'Choose a shift and the weekdays you work, then a week.'), brushOpts),
     payListCard(),
