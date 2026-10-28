@@ -1328,7 +1328,7 @@ function render() {
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
   const view = { goal: goalView, approve: approveView, add: addView, shifts: shiftsView, review: reviewView, report: reportView, settings: settingsView }[tab]();
   const age = backupAge();
-  const banner = (needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
+  const banner = (false && needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
     h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: backupNow }, 'Back up now'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { bannerHidden = true; render(); } }, 'Later'))) : null;
   const missing = (!payHidden && tab !== 'add') ? incomeMissing() : null;
