@@ -658,14 +658,14 @@ function incomeCard() {
 
 // Home page: only the week that is running now, before and after tax. No past weeks, fortnight or month.
 function weekHome() {
-  const wd = weekDates(0), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
-  const t = workTotals(wd[0], wd[6]);
+  const wd = weekDates(0), fs = fortnightStart(iso(new Date())), fe = iso(addDays(isoToDate(fs), 13)), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
   const big = (label, v, cls) => h('div', { style: 'flex:1;min-width:0' }, h('div', { class: 'mute small' }, label), h('div', { class: 'safefig ' + (cls || '') }, money(v)));
-  return h('div', {},
-    h('div', { class: 'sec' }, h('h2', {}, 'This week'), h('p', { class: 'mute small' }, `${sh(isoToDate(wd[0]))} to ${sh(isoToDate(wd[6]))}`),
+  const block = (title, a, b, first) => { const t = workTotals(a, b);
+    return h('div', { class: 'sec', style: first ? '' : 'margin-top:22px' }, h('h2', {}, title), h('p', { class: 'mute small' }, `${sh(isoToDate(a))} to ${sh(isoToDate(b))}`),
       h('div', { style: 'display:flex;gap:16px;margin-top:14px' }, big('Before tax', t.gross), big('After tax', t.net, 'mint')),
-      t.n === 0 && h('p', { class: 'mute small', style: 'margin-top:12px' }, 'No shifts ticked for this week yet. Tick them in the Shifts tab.'),
-      h('button', { class: 'btn', style: 'margin-top:14px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts')));
+      t.n === 0 && h('p', { class: 'mute small', style: 'margin-top:12px' }, 'No shifts ticked yet. Tick them in the Shifts tab.')); };
+  return h('div', {}, block('This week', wd[0], wd[6], true), block('This fortnight', fs, fe),
+    h('button', { class: 'btn', style: 'margin-top:18px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
 
 function goalView() {
