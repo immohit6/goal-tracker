@@ -592,11 +592,14 @@ function goalForm(g) {
           if (!name.value.trim() || !(t > 0) || !dl.value) return flash('Enter a name, target and deadline.');
           const startDay = st.value || iso(new Date());
           if (startDay > dl.value) return flash('The start date must be before the deadline.');
+          const previous = db.goal;
           db.goal = { name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: startDay };
-          editGoal = false; intro = true; await save(); flash('Goal saved.');
+          if (!(await save())) { if (db) db.goal = previous; return; }
+          if (!db) return;
+          editGoal = false; flash('Goal saved.');
         }
       }, 'Save goal'),
-      g && h('button', { class: 'btn', onclick: () => { editGoal = false; render(); } }, 'Cancel'),
+      h('button', { class: 'btn', onclick: () => { editGoal = false; render(); } }, 'Cancel'),
       g && h('button', { class: 'btn danger', onclick: async () => { if (!confirm('Delete this goal? Your transactions stay.')) return; db.goal = null; editGoal = false; await save(); flash('Goal deleted.'); } }, 'Delete')),
     h('p', { class: 'mute small', style: 'margin-top:16px' }, 'Progress counts approved personal income minus approved personal expenses since the goal start date. Business transactions and transfers are left out.'));
 }
@@ -674,40 +677,29 @@ function weekHome() {
 }
 
 function goalView() {
-  return weekHome();
-  /* Old home page kept below, unreachable for now. */
-  const g = db.goal;
-  if (!g || editGoal) return goalForm(g);
-  const s = goalStats(); const anim = intro && !reduce; intro = false;
-  const fig = h('div', { class: 'fig cnt' }, money(s.saved));
-  if (anim) fig.dataset.to = String(s.saved);
-  const fill = h('div', { class: 'rfill', style: `width:${anim ? 0 : s.pct}%` });
-  if (anim) fill.dataset.w = String(s.pct);
-  const ruler = h('div', { class: 'ruler' }, fill, [25, 50, 75].map(p => h('div', { class: 'tick', style: `left:${p}%` })),
-    !s.done && h('div', { class: 'sched', style: `left:${s.expPct}%` }, h('i', { style: s.expPct < 12 ? 'left:0;transform:none' : s.expPct > 88 ? 'left:auto;right:0;transform:none' : '' }, 'On schedule')));
-  const verdict = s.done ? 'Goal reached. Well done.'
-    : s.ahead >= 0 ? `Ahead of schedule by ${money(s.ahead)}.`
-    : `Behind schedule by ${money(-s.ahead)}.`;
-  const paceNote = s.done ? null
-    : !s.enough ? h('div', { class: 'note' }, h('p', { class: 'mute' }, 'Approve at least a week of transactions to see your saving rate.'))
-    : s.pace >= s.perDay ? h('div', { class: 'note good' }, h('p', {}, `You are saving about ${money(s.pace)} a day over the last 30 days. You need ${money(s.perDay)} a day. Keep it up.`))
-    : h('div', { class: 'note warn' }, h('p', {}, `You are saving about ${money(s.pace)} a day over the last 30 days, but you need ${money(s.perDay)}. Closing the gap means ${money(s.perDay - s.pace)} more each day.`));
-  return h('div', {},
-    h('div', { class: 'hero' },
-      h('div', { class: 'name' }, g.name),
-      h('div', { class: 'figrow' }, fig, h('div', { class: 'of' }, `of ${money(g.target)}`)),
-      ruler, h('div', { class: 'ruler-gap' }),
-      h('div', { class: 'verdict' }, verdict),
-      h('div', { class: 'name', style: 'margin-top:6px;font-size:13px' }, `Counts approved personal income and spending dated ${niceDate(g.start)} or later.`),
-      h('div', { class: 'herofoot' }, h('span', { class: 'hp' }, `${Math.round(s.pct)}% saved`), h('span', { class: 'hp' }, `Due ${niceDate(g.deadline)}`), !s.done && !s.overdue && h('span', { class: 'hp' }, `${s.daysLeft} days left`))),
-    incomeCard(),
-    safeCard(s),
-    !s.done && h('div', { class: 'sec' }, h('h2', {}, 'Savings you need'),
-      s.overdue ? h('p', { class: 'amber', style: 'margin-top:6px' }, 'The deadline has passed. Edit the goal to set a new date.')
-        : h('div', {}, h('p', { class: 'mute' }, `${money(s.remaining)} to go in ${s.daysLeft} days.`),
-          h('div', { class: 'strip' }, h('div', { class: 'cell' }, h('b', {}, money(s.perDay)), h('span', {}, 'a day')), h('div', { class: 'cell' }, h('b', {}, money(s.perWeek)), h('span', {}, 'a week')), h('div', { class: 'cell' }, h('b', {}, money(s.perMonth)), h('span', {}, 'a month'))),
-          paceNote)),
-    h('div', { class: 'btns' }, h('button', { class: 'btn primary', onclick: () => { tab = 'review'; window.scrollTo(0, 0); render(); } }, 'Weekly review'), h('button', { class: 'btn', onclick: () => { editGoal = true; render(); } }, 'Edit goal')));
+  const goal = db.goal;
+  if (editGoal) return goalForm(goal);
+
+  const actions = h('div', { class: 'btns' },
+    h('button', { class: 'btn primary', onclick: () => { editGoal = true; window.scrollTo(0, 0); render(); } }, goal ? 'Edit goal' : 'Set a savings goal'),
+    h('button', { class: 'btn', onclick: () => { tab = 'review'; window.scrollTo(0, 0); render(); } }, 'Weekly review'));
+  if (!goal) return h('div', {}, weekHome(),
+    h('div', { class: 'panel' }, h('h2', {}, 'Savings goal'),
+      h('p', { class: 'mute' }, 'Set a target and deadline to see how much to save each week.'), actions));
+
+  const stats = goalStats();
+  const pace = stats.done ? 'Goal reached.'
+    : stats.overdue ? 'The deadline has passed. Update your goal to set a new date.'
+    : `${money(stats.remaining)} to go · Save ${money(stats.perWeek)} per week`;
+  return h('div', {}, weekHome(),
+    h('div', { class: 'panel' },
+      h('h2', {}, goal.name),
+      h('p', {}, h('strong', {}, money(stats.saved)), ` saved of ${money(goal.target)}`),
+      h('div', { class: 'prog', role: 'progressbar', 'aria-label': 'Savings goal progress', 'aria-valuenow': Math.round(stats.pct) },
+        h('div', { style: `width:${stats.pct}%` })),
+      h('p', { class: 'mute small' }, `Due ${niceDate(goal.deadline)}`),
+      h('p', {}, pace),
+      actions));
 }
 
 function approveView() {
@@ -790,6 +782,44 @@ function addView() {
     loggedHistory());
 }
 
+let editingTransaction = false;
+function transactionEditor(t, close) {
+  const amt = h('input', { type: 'number', min: '0.01', step: '0.01', required: true, inputmode: 'decimal', value: Math.abs(t.amount), 'aria-label': 'Amount' });
+  const categories = t.amount < 0 ? [...EXPENSE_CATS, 'Transfer'] : [...INCOME_CATS, 'Transfer', ...EXPENSE_CATS];
+  if (t.category && !categories.includes(t.category)) categories.unshift(t.category);
+  const category = h('select', { 'aria-label': 'Category' },
+    !t.category && h('option', { value: '' }, 'Uncategorized'),
+    categories.map(c => h('option', { value: c }, c)));
+  category.value = t.category || '';
+  const error = h('p', { class: 'coral small', role: 'alert' });
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Save changes');
+  const cancel = h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel');
+  return h('form', { class: 'panel', onsubmit: async e => {
+    e.preventDefault();
+    if (submit.disabled) return;
+    if (editingTransaction) { error.textContent = 'Wait for the other transaction to finish saving.'; return; }
+    editingTransaction = true;
+    const previous = { amount: t.amount, category: t.category };
+    submit.disabled = true;
+    cancel.disabled = true;
+    t.amount = t.amount < 0 ? -amt.valueAsNumber : amt.valueAsNumber;
+    t.category = category.value;
+    try {
+      await persist();
+    } catch {
+      Object.assign(t, previous);
+      error.textContent = 'Could not save your changes. Try again.';
+      submit.disabled = false;
+      cancel.disabled = false;
+      return;
+    } finally {
+      editingTransaction = false;
+    }
+    if (db?.tx.includes(t)) flash('Transaction updated.');
+  } }, field(t.amount < 0 ? 'Expense amount (AUD)' : 'Income amount (AUD)', amt),
+  field('Category', category), error, h('div', { class: 'btns' }, submit, cancel));
+}
+
 // Every entry you have logged, newest first, with the exact time you logged it.
 function loggedHistory() {
   const list = db.tx.filter(t => t.status !== 'pending' || t.loggedAt).slice().sort((a, b) => (b.loggedAt || 0) - (a.loggedAt || 0) || (a.date < b.date ? 1 : -1));
@@ -797,11 +827,24 @@ function loggedHistory() {
   const total = list.reduce((n, t) => n + t.amount, 0);
   return h('div', { class: 'sec', style: 'margin-top:28px' }, h('h2', {}, 'History'),
     h('p', { class: 'mute small' }, list.length ? `${list.length} entr${list.length === 1 ? 'y' : 'ies'} logged, ${money(total)} in total. Newest first.` : 'Nothing logged yet. Everything you add shows up here with the date and time you logged it.'),
-    list.map(t => h('div', { style: 'display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:13px 0;border-top:1px solid var(--line)' },
-      h('div', { style: 'min-width:0' }, h('b', { style: 'display:block;overflow-wrap:anywhere' }, t.desc || t.category || 'Entry'),
-        h('div', { class: 'mute small' }, `${t.category ? t.category + ' · ' : ''}${t.scope === 'business' ? 'Business' : 'Personal'} · pay date ${niceDate(t.date)}`),
-        h('div', { class: 'mute small' }, t.loggedAt ? 'Logged ' + when(t.loggedAt) : 'Logged before times were recorded')),
-      h('b', { class: t.amount < 0 ? 'coral' : 'mint', style: 'white-space:nowrap;font-variant-numeric:tabular-nums' }, money(t.amount)))));
+    list.map(t => {
+      const edit = h('button', { class: 'ghost', type: 'button', 'aria-label': `Edit ${t.desc || t.category || 'entry'}` }, 'Edit');
+      const row = h('div', { style: 'display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:13px 0;border-top:1px solid var(--line)' },
+        h('div', { style: 'min-width:0' }, h('b', { style: 'display:block;overflow-wrap:anywhere' }, t.desc || t.category || 'Entry'),
+          h('div', { class: 'mute small' }, `${t.category ? t.category + ' · ' : ''}${t.scope === 'business' ? 'Business' : 'Personal'} · pay date ${niceDate(t.date)}`),
+          h('div', { class: 'mute small' }, t.loggedAt ? 'Logged ' + when(t.loggedAt) : 'Logged before times were recorded')),
+        h('div', { style: 'display:grid;justify-items:end' },
+          h('b', { class: t.amount < 0 ? 'coral' : 'mint', style: 'white-space:nowrap;font-variant-numeric:tabular-nums' }, money(t.amount)),
+          t.status === 'approved' && edit));
+      const entry = h('div', {}, row);
+      if (t.status === 'approved') edit.addEventListener('click', () => {
+        const editor = transactionEditor(t, () => { editor.remove(); edit.disabled = false; edit.focus(); });
+        edit.disabled = true;
+        entry.append(editor);
+        editor.querySelector('input').focus();
+      });
+      return entry;
+    }));
 }
 
 const PAL = ['#2446d8', '#0f9d6e', '#e0a43a', '#d6453d', '#8a63d2', '#2fb5c9', '#e07b3a', '#7a8a99'];
