@@ -688,17 +688,18 @@ function incomeCard() {
 function weekHome() {
   const fs = fortnightStart(iso(new Date())), fe = iso(addDays(isoToDate(fs), 13)), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
   const t = workTotals(fs, fe);
-  const fig = h('div', { class: 'fig', style: 'color:var(--mint)' }, money(t.net + t.sac));
+  const fortnightPackaging = 1078;
+  const fig = h('div', { class: 'fig', style: 'color:var(--mint)' }, money(t.net + fortnightPackaging));
   const row = (label, v, strong) => h('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;padding:13px 0;border-top:1px solid var(--hero-line)' },
     h('span', { style: 'color:var(--hero-mute);font-size:15px' }, label), h('span', { style: `font-size:${strong ? 26 : 20}px;font-weight:${strong ? 500 : 400};letter-spacing:-.02em;font-variant-numeric:tabular-nums` }, money(v)));
   return h('div', {},
     h('div', { class: 'hero' },
       h('div', { class: 'name', style: 'text-transform:uppercase;letter-spacing:.08em;font-size:12px' }, 'This fortnight'),
       h('div', { class: 'name', style: 'margin-top:2px' }, `${sh(isoToDate(fs))} to ${sh(isoToDate(fe))}`),
-      h('div', { class: 'figrow', style: 'margin:18px 0 4px;flex-direction:column;align-items:flex-start;gap:6px' }, fig, h('div', { class: 'of' }, 'Estimated after tax, including salary packaging')),
+      h('div', { class: 'figrow', style: 'margin:18px 0 4px;flex-direction:column;align-items:flex-start;gap:6px' }, fig, h('div', { class: 'of' }, 'Estimated bank deposit plus fortnightly salary packaging')),
       h('div', { style: 'margin-top:22px' },
         row('Estimated bank deposit', t.net, true),
-        row('Salary packaging', t.sac, true),
+        row('Salary packaging', fortnightPackaging, true),
         row('Before tax', t.gross),
         row('Estimated tax', t.tax)),
       t.n === 0 && h('p', { class: 'name', style: 'margin-top:12px' }, 'No shifts ticked for this fortnight yet.')),
