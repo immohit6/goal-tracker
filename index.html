@@ -164,6 +164,18 @@ input:focus,select:focus{border-color:var(--cobalt)}
 .savings-bar i.loss{bottom:auto;top:50%;background:var(--coral);border-radius:0 0 3px 3px}
 .savings-entry{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;overflow-wrap:anywhere}
 .savings-entry strong{white-space:nowrap}
+.payday-timeline h3{font-size:14px;margin:12px 0 6px}
+.payday-timeline>button{margin-top:10px}
+.payday-item{border-top:1px solid var(--line)}
+.payday-item>summary{cursor:pointer;padding:9px 0;display:list-item}
+.payday-row>span{display:inline-block;vertical-align:middle}
+.payday-row>span:first-of-type{width:calc(63% - 20px);overflow-wrap:anywhere}
+.payday-value{width:37%;text-align:right}
+.payday-detail{margin:0 0 12px;padding:12px;background:var(--paper);border-radius:12px}
+.payday-detail form,.payday-detail>button{margin-top:12px}
+.payday-shifts{margin:0;padding:0;list-style:none}
+.payday-shifts li{display:flex;justify-content:space-between;gap:8px;padding:6px 0}
+.payday-shifts strong{white-space:nowrap}
 .shift-preview{width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);margin:auto;color:var(--ink);overflow:auto}
 .shift-preview::backdrop{background:#07101db3}
 .shift-preview input[type=range]{padding:0;min-height:32px;accent-color:var(--mint)}
@@ -672,19 +684,23 @@ function incomeCard() {
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
 
-// Home page: only the fortnight that is running now, before and after tax.
+// Current fortnight estimate, including the value of salary packaging.
 function weekHome() {
   const fs = fortnightStart(iso(new Date())), fe = iso(addDays(isoToDate(fs), 13)), sh = x => `${x.getDate()} ${x.toLocaleDateString('en-AU', { month: 'short' })}`;
-  const t = workTotals(fs, fe), taken = Math.max(0, t.gross - t.net);
-  const fig = h('div', { class: 'fig', style: 'color:var(--mint)' }, money(t.net));
+  const t = workTotals(fs, fe);
+  const fig = h('div', { class: 'fig', style: 'color:var(--mint)' }, money(t.net + t.sac));
   const row = (label, v, strong) => h('div', { style: 'display:flex;justify-content:space-between;align-items:baseline;padding:13px 0;border-top:1px solid var(--hero-line)' },
     h('span', { style: 'color:var(--hero-mute);font-size:15px' }, label), h('span', { style: `font-size:${strong ? 26 : 20}px;font-weight:${strong ? 500 : 400};letter-spacing:-.02em;font-variant-numeric:tabular-nums` }, money(v)));
   return h('div', {},
     h('div', { class: 'hero' },
       h('div', { class: 'name', style: 'text-transform:uppercase;letter-spacing:.08em;font-size:12px' }, 'This fortnight'),
       h('div', { class: 'name', style: 'margin-top:2px' }, `${sh(isoToDate(fs))} to ${sh(isoToDate(fe))}`),
-      h('div', { class: 'figrow', style: 'margin:18px 0 4px;flex-direction:column;align-items:flex-start;gap:6px' }, fig, h('div', { class: 'of' }, 'after tax')),
-      h('div', { style: 'margin-top:22px' }, row('Before tax', t.gross, true), row('Tax and deductions', taken)),
+      h('div', { class: 'figrow', style: 'margin:18px 0 4px;flex-direction:column;align-items:flex-start;gap:6px' }, fig, h('div', { class: 'of' }, 'Estimated after tax, including salary packaging')),
+      h('div', { style: 'margin-top:22px' },
+        row('Estimated bank deposit', t.net, true),
+        row('Salary packaging', t.sac, true),
+        row('Before tax', t.gross),
+        row('Estimated tax', t.tax)),
       t.n === 0 && h('p', { class: 'name', style: 'margin-top:12px' }, 'No shifts ticked for this fortnight yet.')),
     h('button', { class: 'btn', onclick: () => { tab = 'shifts'; window.scrollTo(0, 0); render(); } }, 'Plan shifts'));
 }
@@ -766,7 +782,8 @@ function goalView() {
     h('button', { class: 'btn', onclick: () => { tab = 'review'; window.scrollTo(0, 0); render(); } }, 'Weekly review'));
   if (!goal) return h('div', {}, weekHome(),
     h('div', { class: 'panel' }, h('h2', {}, 'Savings goal'),
-      h('p', { class: 'mute' }, 'Set a target and deadline to see how much to save each week.'), actions));
+      h('p', { class: 'mute' }, 'Set a target and deadline to see how much to save each week.'), actions),
+    paydayTimeline());
 
   const stats = goalStats();
   const pace = stats.done ? 'Goal reached.'
@@ -781,7 +798,7 @@ function goalView() {
       h('p', { class: 'mute small' }, `Due ${niceDate(goal.deadline)}`),
       h('p', {}, pace),
       actions),
-    savingsHistory(goal));
+    paydayTimeline(), savingsHistory(goal));
 }
 
 function approveView() {
@@ -1062,19 +1079,36 @@ function periodTax(p, gross, days) {
   return atoWeekly(gross * 7 / days, p.tft) * days / 7;
 }
 const weekStart = d => { const x = isoToDate(d); return iso(addDays(x, -((x.getDay() + 6) % 7))); };
-// The pay period a date falls in for one workplace. Paid fortnightly: the 14 days that end `lag` days before payday. Otherwise the Mon-Sun week.
+// A configured pay period ends the specified number of days before payday.
 const sacFortnight = p => (p.sac || []).reduce((n, x) => n + (+x.amount || 0), 0);
+function payCycle(p) {
+  return (p.payEvery === 7 || p.payEvery === 14) && p.payDay
+    ? { anchor: p.payDay, days: p.payEvery, lag: Math.floor(p.payLag || 0) } : null;
+}
 function periodOf(p, d) {
-  if (p.payEvery === 14) {
-    const a = p.payDay ? addDays(isoToDate(p.payDay), -(p.payLag || 0) - 13) : isoToDate(FN_ANCHOR), k = Math.floor(dayDiff(iso(a), d) / 14), st = addDays(a, k * 14);
-    return [iso(st), iso(addDays(st, 13)), 14];
+  const cycle = payCycle(p);
+  if (cycle) {
+    const anchorEnd = iso(addDays(isoToDate(cycle.anchor), -cycle.lag));
+    const offset = Math.ceil(dayDiff(anchorEnd, d) / cycle.days);
+    const end = addDays(isoToDate(anchorEnd), offset * cycle.days);
+    return [iso(addDays(end, 1 - cycle.days)), iso(end), cycle.days];
   }
-  const st = weekStart(d); return [st, iso(addDays(isoToDate(st), 6)), 7];
+  const start = p.payEvery === 14 ? fortnightStart(d) : weekStart(d);
+  const days = p.payEvery === 14 ? 14 : 7;
+  return [start, iso(addDays(isoToDate(start), days - 1)), days];
+}
+function* placeShiftsIn(w, p, from, to) {
+  for (let day = from; day <= to; day = iso(addDays(isoToDate(day), 1))) {
+    for (const key of w.shifts[day] || []) {
+      const [id, type] = ekParse(key);
+      if (id === p.id) yield { day, label: entryLabel(p, typeOf(p, type)?.name), gross: entryPay(w, day, key, p, type) };
+    }
+  }
 }
 function placeGrossIn(w, p, from, to) {
-  let g = 0;
-  for (const d in w.shifts) { if (d < from || d > to) continue; for (const key of w.shifts[d]) { const [id, t] = ekParse(key); if (id === p.id) g += entryPay(w, d, key, p, t); } }
-  return g;
+  let gross = 0;
+  for (const shift of placeShiftsIn(w, p, from, to)) gross += shift.gross;
+  return gross;
 }
 function payPeriodDeductions(p, gross, days) {
   const sacrifice = Math.min(sacFortnight(p) * days / 14, gross);
@@ -1225,7 +1259,7 @@ function placePanel(p, idx) {
     field('Extra per hour on every hour, e.g. team leader allowance (optional)', exH), field('Extra per shift, e.g. laundry (optional)', exS),
     field('Minimum pay per shift (optional)', min), field('How tax is taken out', tm), field('Flat percentage (only for Flat)', tax), field('Tax-free threshold claimed at this job? (ATO tables only)', tf),
     h('p', { class: 'mute small', style: 'margin:0 0 8px' }, 'ATO tables include Medicare levy but not HELP/HECS. You can claim the tax-free threshold at one job only.'),
-    h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'Pay cycle (optional): lets the Goal screen estimate your next pay.'),
+    h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'Pay cycle (optional): shows your estimated deposits on the Home payday timeline.'),
     field('Paid every how many days (7 or 14)', pe), field('A payday, past or future', pdIn), field('Days between the last shift in a pay period and payday', pl),
     h('div', { class: 'btns' },
       h('button', { class: 'btn primary', onclick: async () => {
@@ -1415,7 +1449,7 @@ function shiftsView() {
       w.places.filter(p => tot.per[p.id]).map(p => h('div', { class: 'flowrow', style: 'margin-top:12px;grid-template-columns:104px 1fr auto' }, h('span', { class: 'mute small' }, `${p.name} · ${tot.per[p.id].n}`),
         h('div', { class: 'bar2' }, h('div', { style: `width:${tot.per[p.id].gross / peak * 100}%;background:${PCOL[idx(p.id) % 4]}` })), h('span', { class: 'small' }, money(tot.per[p.id].gross))))),
     h('p', { class: 'mute small', style: 'margin-top:14px' }, 'These are estimates from the rates you entered. Penalty rates for public holidays, overtime and super are not included.'),
-    h('div', { class: 'panel', style: 'margin-top:22px' }, h('h2', {}, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have their own shift types. Uber starts at $150 a day, and you can change any single day.'),
+    h('div', { class: 'panel', style: 'margin-top:22px' }, h('h2', { id: 'workplaces', tabindex: '-1' }, 'Workplaces'), h('p', { class: 'mute small', style: 'margin-bottom:6px' }, 'Narracan and Menorock have their own shift types. Uber starts at $150 a day, and you can change any single day.'),
       w.places.map((p, i) => placePanel(p, i)),
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { const p = { id: uid(), name: 'New workplace', min: 0, tax: 0, taxMode: 'none', tft: false, types: [mkType('AM'), mkType('PM')] }; w.places.push(p); editPlace = p.id; await save(); render(); } }, 'Add workplace'))));
 }
@@ -1476,14 +1510,162 @@ function reviewView() {
     h('button', { class: 'btn', onclick: () => { tab = 'goal'; window.scrollTo(0, 0); render(); } }, 'Back to Goal'));
 }
 
-// ---------- next pay ----------
-// A workplace with a pay cycle: every N days, on a known payday, covering the N days that end LAG days before payday.
+// ---------- payday timeline ----------
+function upcomingPayday(cycle, today) {
+  const periods = Math.ceil(dayDiff(cycle.anchor, today) / cycle.days);
+  return iso(addDays(isoToDate(cycle.anchor), periods * cycle.days));
+}
+
+function paydayEstimate(w, p, cycle, pay) {
+  const end = addDays(isoToDate(pay), -cycle.lag);
+  const from = iso(addDays(end, 1 - cycle.days));
+  const to = iso(end);
+  const shifts = [...placeShiftsIn(w, p, from, to)];
+  const gross = shifts.reduce((total, shift) => total + shift.gross, 0);
+  const { sacrifice, tax } = payPeriodDeductions(p, gross, cycle.days);
+  return { p, pay, from, to, shifts, n: shifts.length, sacrifice, amount: Math.round((gross - sacrifice - tax) * 100) / 100 };
+}
+
 function payInfo(p) {
-  if (!(p.payEvery > 0) || !p.payDay) return null;
-  const today = isoToDate(iso(new Date())), step = p.payEvery; let pay = isoToDate(p.payDay);
-  const n = Math.ceil((today - pay) / (86400000 * step)); if (n > 0) pay = addDays(pay, n * step);
-  const end = addDays(pay, -(p.payLag || 0)), start = addDays(end, -(step - 1)), t = workTotals(iso(start), iso(end)), o = t.per[p.id] || { n: 0, gross: 0 };
-  return { p, pay: iso(pay), from: iso(start), to: iso(end), n: o.n, gross: o.gross, amount: o.gross - Math.min(sacFortnight(p) * step / 14, o.gross) - periodTax(p, o.gross - Math.min(sacFortnight(p) * step / 14, o.gross), step === 14 ? 14 : 7) };
+  const cycle = payCycle(p);
+  return cycle ? paydayEstimate(ensureWork(), p, cycle, upcomingPayday(cycle, iso(new Date()))) : null;
+}
+
+let activePayday = null;
+let savingPaydayDeposit = false;
+
+function paydayDeposit(p, pay) {
+  return approved().find(t => t.payday?.workplaceId === p.id && t.payday.date === pay);
+}
+
+function paydayDepositForm(row, today) {
+  const { p, pay } = row;
+  const amount = h('input', { type: 'number', required: true, inputmode: 'decimal', min: '0.01', step: '0.01', 'aria-label': 'Deposit amount' });
+  const received = h('input', { type: 'date', required: true, max: today, value: pay < today ? pay : today, 'aria-label': 'Date received' });
+  const nearby = approved()
+    .filter(t => !t.payday && t.amount > 0 && t.date <= today && INCOME_CATS.includes(t.category) && Math.abs(dayDiff(pay, t.date)) <= 7)
+    .sort((a, b) => Math.abs(dayDiff(pay, a.date)) - Math.abs(dayDiff(pay, b.date)));
+  const income = h('select', { required: true, 'aria-label': 'Existing income transaction' },
+    h('option', { value: '' }, 'Choose a transaction'),
+    nearby.map(t => h('option', { value: t.id }, `${niceDate(t.date)} · ${t.desc || t.category} · ${money(t.amount)}`)));
+  const record = h('button', { type: 'submit', class: 'btn primary' }, 'Record deposit');
+  const link = h('button', { type: 'submit', class: 'btn' }, 'Link existing deposit');
+  const error = h('p', { class: 'coral small', role: 'alert' });
+
+  async function store(existing = null) {
+    const vault = db;
+    if (!vault || savingPaydayDeposit) return;
+    if (paydayDeposit(p, pay) || (existing && existing.payday)) {
+      error.textContent = 'That deposit is already linked to a payday.';
+      return;
+    }
+    const tx = existing || {
+      id: uid(), date: received.value, desc: `${p.name} pay`, amount: amount.valueAsNumber,
+      status: 'approved', category: 'Salary', scope: 'personal', loggedAt: Date.now()
+    };
+    savingPaydayDeposit = record.disabled = link.disabled = true;
+    tx.payday = { workplaceId: p.id, date: pay };
+    if (!existing) vault.tx.push(tx);
+    try {
+      await persist();
+    } catch {
+      if (existing) delete tx.payday;
+      else vault.tx.splice(vault.tx.indexOf(tx), 1);
+      error.textContent = 'Could not save the deposit. Try again.';
+      return;
+    } finally {
+      savingPaydayDeposit = record.disabled = link.disabled = false;
+    }
+    if (db === vault) {
+      activePayday = `${p.id}/${pay}`;
+      flash(existing ? 'Existing deposit linked.' : 'Deposit recorded.');
+    }
+  }
+
+  return h('div', {},
+    nearby.length > 0 && h('details', {},
+      h('summary', {}, 'Already logged this deposit?'),
+      h('form', { onsubmit: e => {
+        e.preventDefault();
+        const existing = nearby.find(t => t.id === income.value);
+        if (existing) store(existing);
+      } }, field('Existing income transaction', income), link)),
+    h('form', { onsubmit: e => { e.preventDefault(); store(); } },
+      h('p', { class: 'mute small' }, 'Record the amount that landed in your bank. This adds a Salary entry to History.'),
+      field('Deposit amount (AUD)', amount), field('Date received', received), record),
+    error);
+}
+
+function paydayDetails(row, today) {
+  const { p, pay, from, to, shifts, sacrifice, amount } = row;
+  const actual = paydayDeposit(p, pay);
+  const key = `${p.id}/${pay}`;
+  const detail = h('div', { class: 'payday-detail' },
+    h('p', { class: 'mute small' }, `Pay period ${niceDate(from)} to ${niceDate(to)}`),
+    h('div', { class: 'wk' }, h('span', {}, 'Estimated bank deposit'), h('strong', {}, money(amount))),
+    sacrifice > 0 && h('div', { class: 'wk' }, h('span', {}, 'Estimated salary packaging'), h('strong', {}, money(sacrifice))),
+    h('h3', {}, 'Shifts included'),
+    shifts.length ? h('ul', { class: 'payday-shifts' }, shifts.map(shift => h('li', {},
+      h('span', {}, `${niceDate(shift.day)} · ${shift.label}`), h('strong', {}, money(shift.gross)))))
+      : h('p', { class: 'mute small' }, 'No shifts planned for this pay period.'));
+
+  if (actual) {
+    const difference = Math.round((actual.amount - amount) * 100) / 100;
+    detail.append(h('div', { class: 'wk' }, h('span', {}, `Received ${niceDate(actual.date)}`), h('strong', {}, money(actual.amount))),
+      h('p', { class: 'mute small' }, difference === 0 ? 'Matches the estimate.' : `${money(Math.abs(difference))} ${difference > 0 ? 'above' : 'below'} the estimate.`));
+    const edit = h('button', { type: 'button', class: 'btn' }, 'Edit recorded income');
+    edit.addEventListener('click', () => {
+      edit.disabled = true;
+      const editor = transactionEditor(actual, () => { editor.remove(); edit.disabled = false; edit.focus(); });
+      detail.append(editor);
+      editor.querySelector('input').focus();
+    });
+    detail.append(edit);
+  } else {
+    detail.append(paydayDepositForm(row, today));
+  }
+
+  return h('details', { class: 'payday-item', name: 'payday', ...(activePayday === key ? { open: '' } : {}) },
+    h('summary', { class: 'payday-row', onclick: e => {
+      activePayday = e.currentTarget.parentElement.open ? null : key;
+    } },
+    h('span', {}, h('strong', {}, p.name), h('br'), niceDate(pay)),
+    h('span', { class: 'payday-value' }, h('strong', {}, money(actual ? actual.amount : amount)),
+      h('br'), actual ? 'Received' : 'Estimated')),
+    detail);
+}
+
+function paydayTimeline() {
+  const w = ensureWork();
+  const today = iso(new Date());
+  const rows = [];
+  const unconfigured = w.places.filter(p => !payCycle(p));
+  for (const p of w.places) {
+    const cycle = payCycle(p);
+    if (!cycle) continue;
+    const next = isoToDate(upcomingPayday(cycle, today));
+    for (const offset of [-2, -1, 0, 1]) {
+      rows.push(paydayEstimate(w, p, cycle, iso(addDays(next, offset * cycle.days))));
+    }
+  }
+  rows.sort((a, b) => a.pay.localeCompare(b.pay) || a.p.name.localeCompare(b.p.name));
+  const upcoming = rows.filter(row => row.pay >= today);
+  const recent = rows.filter(row => row.pay < today).reverse();
+  const setup = h('button', { class: 'btn', onclick: () => {
+    editPlace = unconfigured[0]?.id || null;
+    tab = 'shifts';
+    render();
+    document.getElementById('workplaces')?.focus();
+  } }, rows.length ? 'Set up more pay cycles' : 'Set up pay cycles');
+
+  return h('section', { class: 'panel payday-timeline', 'aria-labelledby': 'payday-timeline-heading' },
+    h('h2', { id: 'payday-timeline-heading' }, 'Payday timeline'),
+    !rows.length && h('p', { class: 'mute small' }, 'Add a known payday and pay cycle for a workplace to see its estimated deposits.'),
+    upcoming.length > 0 && h('h3', {}, 'Upcoming'),
+    upcoming.map(row => paydayDetails(row, today)),
+    recent.length > 0 && h('h3', {}, 'Recent'),
+    recent.map(row => paydayDetails(row, today)),
+    (unconfigured.length > 0 || !rows.length) && setup);
 }
 
 // ---------- 9am reminder ----------
