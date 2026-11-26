@@ -176,20 +176,21 @@ input:focus,select:focus{border-color:var(--cobalt)}
 .payday-shifts{margin:0;padding:0;list-style:none}
 .payday-shifts li{display:flex;justify-content:space-between;gap:8px;padding:6px 0}
 .payday-shifts strong{white-space:nowrap}
-.shift-preview{width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);margin:auto;color:var(--ink);overflow:auto}
-.shift-preview::backdrop{background:#07101db3}
+.panel-modal{width:min(440px,calc(100% - 32px));max-height:calc(100dvh - 32px);margin:auto;color:var(--ink);overflow:auto}
+.panel-modal::backdrop{background:#07101db3}
 .shift-preview input[type=range]{padding:0;min-height:32px;accent-color:var(--mint)}
-.shift-preview .btns{margin-top:14px}
+.panel-modal .btns{margin-top:14px}
 .drop{display:flex;align-items:center;gap:14px;border:1.5px dashed var(--line);border-radius:16px;padding:18px;cursor:pointer;margin:12px 0}
 .drop:hover,.drop.over{border-color:var(--cobalt);background:color-mix(in srgb,var(--cobalt) 6%,transparent)}
 .drop input{display:none}
 .drop b{display:block}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-90px);background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:14px;font-weight:550;box-shadow:var(--shadow);z-index:20;transition:transform .3s cubic-bezier(.2,.8,.2,1);max-width:calc(100vw - 28px)}
 #toast.show{transform:translate(-50%,0)}
-.lockwrap{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:20px}
-.lockcard{width:100%;max-width:400px}
-.lockcard .mark{width:54px;height:54px;border-radius:16px;margin-bottom:22px}
-.lockcard h1{font-size:34px;font-weight:600;letter-spacing:-.03em;margin-bottom:8px}
+.startup-wrap{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:20px}
+.startup-card{width:100%;max-width:400px}
+.startup-card .mark{width:54px;height:54px;border-radius:16px;margin-bottom:22px}
+.startup-card form,.startup-card>button{margin-top:14px}
+.startup-card h1{font-size:34px;font-weight:600;letter-spacing:-.03em;margin-bottom:8px}
 .err{color:var(--coral);font-size:14px;margin-top:10px;min-height:20px}
 .banner{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:14px;padding:12px 14px;margin-bottom:16px}
 .banner p{margin:2px 0 0}
@@ -261,7 +262,6 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   chart: '<path d="M4 20V11M10 20V4M16 20v-7M22 20H2"/>',
   sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
-  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
   cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   ruler: '<path d="M3 15l12-12 6 6-12 12zM8 10l2 2M11 7l2 2M5 13l2 2"/>'
@@ -282,7 +282,7 @@ const daysBetween = (a, b) => Math.round((isoToDate(b) - isoToDate(a)) / 8640000
 const niceDate = s => isoToDate(s).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
 
 // ---------- encrypted vault ----------
-const KEY = 'gt_vault_v1';
+const LEGACY_KEY = 'gt_vault_v1', BIO = 'gt_bio_v1';
 const enc = new TextEncoder(), dec = new TextDecoder();
 function toB64(buf) { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
 function fromB64(s) { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
@@ -290,29 +290,105 @@ async function deriveKey(pass, salt) {
   const km = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
-let cryptoKey = null, salt = null, db = null, curPass = null;
-async function persist() {
+async function encryptVault(json, key) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, enc.encode(JSON.stringify(db)));
-  localStorage.setItem(KEY, JSON.stringify({ v: 1, salt: toB64(salt), iv: toB64(iv), data: toB64(ct) }));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(json));
+  return { iv: toB64(iv), data: toB64(ciphertext) };
 }
-async function unlock(pass) {
-  const raw = JSON.parse(localStorage.getItem(KEY));
-  const s = fromB64(raw.salt);
-  const k = await deriveKey(pass, s);
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(raw.iv) }, k, fromB64(raw.data));
-  db = JSON.parse(dec.decode(pt)); cryptoKey = k; salt = s; curPass = pass;
+async function decryptVault(record, key) {
+  const bytes = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(record.iv) }, key, fromB64(record.data));
+  const data = JSON.parse(dec.decode(bytes));
+  if (!data || !Array.isArray(data.tx) || !data.rules || typeof data.rules !== 'object') {
+    throw new Error('The file does not contain Goal Tracker data.');
+  }
+  return data;
 }
-async function createVault(pass) {
-  salt = crypto.getRandomValues(new Uint8Array(16));
-  cryptoKey = await deriveKey(pass, salt);
-  db = { goal: null, tx: [], rules: {} }; curPass = pass;
-  await persist();
+async function openPasswordVault(text, pass) {
+  const record = JSON.parse(text);
+  if (record?.v !== 1 || !record.salt || !record.iv || !record.data) throw new Error('Invalid backup.');
+  return decryptVault(record, await deriveKey(pass, fromB64(record.salt)));
 }
-// ---------- Face ID (WebAuthn PRF) ----------
-// The passcode is stored only after being encrypted with a key that the phone releases
-// after a Face ID check. Without Face ID the stored copy is useless.
-const BIO = 'gt_bio_v1';
+
+let db = null, cryptoKey = null, revision = null, legacyVault = null, startupError = '';
+let storagePromise, saveQueue = Promise.resolve();
+const emptyVault = () => ({ goal: null, tx: [], rules: {} });
+
+function deviceStorage() {
+  if (!storagePromise) storagePromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open('gt_device_vault', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('vault');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  }).catch(error => { storagePromise = null; throw error; });
+  return storagePromise;
+}
+
+async function readDeviceVault() {
+  const storage = await deviceStorage();
+  return new Promise((resolve, reject) => {
+    const request = storage.transaction('vault').objectStore('vault').get('current');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function writeDeviceVault(json, key) {
+  const write = saveQueue.then(async () => {
+    const [storage, encrypted] = await Promise.all([deviceStorage(), encryptVault(json, key)]);
+    const nextRevision = uid();
+    await new Promise((resolve, reject) => {
+      const transaction = storage.transaction('vault', 'readwrite');
+      const store = transaction.objectStore('vault');
+      const read = store.get('current');
+      let writeError;
+      read.onsuccess = () => {
+        if ((read.result?.revision ?? null) !== revision) {
+          writeError = new Error('Goal Tracker was saved in another tab. Reload to open the latest data.');
+          transaction.abort();
+          return;
+        }
+        try { store.put({ ...encrypted, key, revision: nextRevision }, 'current'); }
+        catch (error) { writeError = error; transaction.abort(); }
+      };
+      transaction.oncomplete = resolve;
+      transaction.onabort = () => reject(writeError || transaction.error || new Error('Browser storage could not save the data.'));
+    });
+    revision = nextRevision;
+  });
+  saveQueue = write.catch(() => {});
+  return write;
+}
+
+const persist = () => writeDeviceVault(JSON.stringify(db), cryptoKey);
+async function replaceDeviceVault(data) {
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await writeDeviceVault(JSON.stringify(data), key);
+  db = data;
+  cryptoKey = key;
+  legacyVault = null;
+  try { localStorage.removeItem(LEGACY_KEY); localStorage.removeItem(BIO); } catch {}
+}
+async function openApp() {
+  startupError = '';
+  render();
+  try {
+    const saved = await readDeviceVault();
+    revision = saved?.revision ?? null;
+    if (saved) {
+      db = await decryptVault(saved, saved.key);
+      cryptoKey = saved.key;
+    } else {
+      legacyVault = localStorage.getItem(LEGACY_KEY);
+      if (!legacyVault) await replaceDeviceVault(emptyVault());
+    }
+  } catch {
+    startupError = 'Could not open your saved data. Check that this browser allows site storage and try again.';
+  }
+  render();
+  if (db) askPersist();
+}
+
+// A Face ID credential from an earlier release can open the old vault once.
 const bioSupported = () => location.protocol === 'https:' && !!window.PublicKeyCredential && !!navigator.credentials;
 const bioRecord = () => { try { return JSON.parse(localStorage.getItem(BIO)); } catch (e) { return null; } };
 async function prfKey(credId, prfSalt) {
@@ -324,29 +400,10 @@ async function prfKey(credId, prfSalt) {
   if (!r || !r.results || !r.results.first) throw new Error('This phone or browser does not support the secure Face ID unlock. Use your passcode.');
   return crypto.subtle.importKey('raw', r.results.first, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
-async function enableBio() {
-  if (!bioSupported()) throw new Error('Face ID needs the https link of the app, not a downloaded file.');
-  if (!curPass) throw new Error('Unlock the app with your passcode first.');
-  const created = await navigator.credentials.create({ publicKey: {
-    rp: { name: 'Goal Tracker', id: location.hostname },
-    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'goal-tracker', displayName: 'Goal Tracker' },
-    challenge: crypto.getRandomValues(new Uint8Array(32)),
-    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
-    timeout: 60000, extensions: { prf: {} } } });
-  const ext = created.getClientExtensionResults();
-  if (!ext.prf || !ext.prf.enabled) throw new Error('This phone or browser does not support the secure Face ID unlock. Keep using your passcode.');
-  const credId = new Uint8Array(created.rawId), prfSalt = crypto.getRandomValues(new Uint8Array(32));
-  const k = await prfKey(credId, prfSalt);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, enc.encode(curPass));
-  localStorage.setItem(BIO, JSON.stringify({ cred: toB64(credId), salt: toB64(prfSalt), iv: toB64(iv), data: toB64(ct) }));
-}
-async function bioUnlock() {
-  const r = bioRecord(); if (!r) throw new Error('Face ID is not set up.');
-  const k = await prfKey(fromB64(r.cred), fromB64(r.salt));
-  const pass = dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(r.iv) }, k, fromB64(r.data)));
-  await unlock(pass);
+async function legacyFaceIDPass() {
+  const record = bioRecord();
+  const key = await prfKey(fromB64(record.cred), fromB64(record.salt));
+  return dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(record.iv) }, key, fromB64(record.data)));
 }
 // ---------- backup reminder ----------
 const BK = 'gt_lastbackup_v1', BACKUP_DAYS = 7, BACKUP_DAYS_RISKY = 2;
@@ -357,19 +414,77 @@ const lastBackup = () => { try { return parseInt(localStorage.getItem(BK), 10) |
 function backupAge() { const t = lastBackup(); return t ? Math.floor((Date.now() - t) / 86400000) : null; }
 function needsBackup() { if (!db || (!db.tx.length && !db.goal)) return false; const a = backupAge(); return a === null || a >= backupLimit(); }
 function backupStatus() { const a = backupAge(); return a === null ? 'You have not made a backup yet.' : a === 0 ? 'Last backup: today.' : `Last backup: ${a} day${a === 1 ? '' : 's'} ago.`; }
-// Called straight from a tap, with nothing awaited first, so the iPhone share sheet is allowed to open.
-async function doBackup() {
-  const text = localStorage.getItem(KEY); if (!text) throw new Error('There is nothing to back up yet.');
+async function saveBackupFile(text) {
   const name = `goal-tracker-backup-${iso(new Date())}.json`;
   const file = new File([text], name, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: 'Goal Tracker backup' }); }
     catch (e) { if (e && e.name === 'AbortError') return false; download(name, text, 'application/json'); }
   } else download(name, text, 'application/json');
-  try { localStorage.setItem(BK, String(Date.now())); } catch (e) {}
+  try { localStorage.setItem(BK, String(Date.now())); } catch {}
   return true;
 }
-const backupNow = async () => { try { const ok = await doBackup(); if (ok) flash('Backup saved. Keep the file somewhere safe, such as iCloud Drive.'); } catch (e) { flash((e && e.message) || 'The backup did not work.'); } };
+
+function openBackupDialog(restore = false) {
+  const title = restore ? 'Restore backup' : 'Create encrypted backup';
+  const pass = h('input', { type: 'password', required: true, minlength: restore ? 1 : 8,
+    autocomplete: restore ? 'current-password' : 'new-password', 'aria-label': 'Backup password' });
+  const file = restore ? h('input', { type: 'file', accept: '.json', required: true, 'aria-label': 'Backup file' }) : null;
+  const status = h('p', { class: 'small', role: 'status' });
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, restore ? 'Replace data from backup' : 'Prepare backup');
+  const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dialog.close() }, 'Cancel');
+  let working = false;
+  const form = h('form', { onsubmit: async e => {
+    e.preventDefault();
+    if (working) return;
+    working = submit.disabled = cancel.disabled = true;
+    status.textContent = restore ? 'Opening backup…' : 'Encrypting backup…';
+    try {
+      if (restore) {
+        let data;
+        try { data = await openPasswordVault(await file.files[0].text(), pass.value); }
+        catch { throw new Error('Could not open the backup. Check the file and its password.'); }
+        await replaceDeviceVault(data);
+        dialog.close();
+        tab = 'goal';
+        editGoal = false;
+        flash('Backup restored.');
+        askPersist();
+        return;
+      }
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const key = await deriveKey(pass.value, salt);
+      const encrypted = await encryptVault(JSON.stringify(db), key);
+      const text = JSON.stringify({ v: 1, salt: toB64(salt), ...encrypted });
+      const saveButton = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+        saveButton.disabled = true;
+        try {
+          if (await saveBackupFile(text)) { dialog.close(); flash('Backup saved.'); }
+        } catch { status.textContent = 'Could not save the backup file. Try again.'; }
+        finally { saveButton.disabled = false; }
+      } }, 'Save backup');
+      pass.value = '';
+      form.replaceChildren(h('p', { class: 'mute small' }, 'Save the encrypted file and keep its password somewhere safe.'),
+        status, h('div', { class: 'btns' }, saveButton, cancel));
+      status.textContent = '';
+    } catch (e) {
+      status.textContent = e.message || 'The backup operation failed.';
+    } finally {
+      working = submit.disabled = cancel.disabled = false;
+    }
+  } },
+  h('p', { class: 'mute small' }, restore
+    ? 'This replaces your current Goal Tracker data. Use the password for the selected backup, or the old app passcode for a backup from an earlier version.'
+    : 'Choose a password of at least 8 characters for this backup file.'),
+  file && field('Backup file', file), field('Backup password', pass), status,
+  h('div', { class: 'btns' }, submit, cancel));
+  const dialog = h('dialog', { class: 'panel panel-modal', 'aria-labelledby': 'backup-title',
+    onclose: () => dialog.remove(), oncancel: e => { if (working) e.preventDefault(); } },
+    h('h2', { id: 'backup-title' }, title), form);
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
 function askPersist() {
   try {
     if (!(navigator.storage && navigator.storage.persist)) { persisted = false; return; }
@@ -379,31 +494,8 @@ function askPersist() {
   } catch (e) { persisted = false; }
 }
 const persistText = () => persisted === true ? 'Storage protection: on. This device has promised not to clear the app data on its own. A backup is still your safety net.'
-  : persisted === false ? 'Storage protection: off. This device may clear the app data when space runs low or the app is unused. Back up often (the reminder comes every 2 days). Using the app from the Home Screen icon usually fixes this.'
-  : 'Storage protection: unlock the app to check.';
-// Replace the vault with a backup file. Used by Settings and by the first screen.
-function restoreFrom(f, done) {
-  if (!f) return flash('Choose a backup file first.');
-  const rd = new FileReader();
-  rd.onload = () => { try { const j = JSON.parse(String(rd.result)); if (!j.salt || !j.iv || !j.data) throw 0; localStorage.setItem(KEY, JSON.stringify(j)); localStorage.removeItem(BIO); db = null; cryptoKey = null; lockErr = ''; done(); } catch (e) { flash('That file is not a valid backup.'); } };
-  rd.readAsText(f);
-}
-function bioPanel() {
-  const on = !!bioRecord();
-  return h('div', { class: 'panel' }, h('h2', {}, 'Face ID'),
-    h('p', { class: 'mute', style: 'margin-bottom:14px' }, bioSupported()
-      ? 'Unlock with Face ID instead of typing your passcode. Your passcode still works as the backup way in.'
-      : 'Face ID works when you open the app from its https link (the GitHub Pages address), not from a downloaded file.'),
-    bioSupported() && h('button', { class: 'btn' + (on ? '' : ' primary'), onclick: async () => {
-      if (on) { localStorage.removeItem(BIO); return flash('Face ID is off.'); }
-      try { await enableBio(); flash('Face ID is on. Lock the app and try it.'); }
-      catch (e) { flash(e && e.name === 'NotAllowedError' ? 'Face ID was cancelled.' : (e && e.message) || 'Could not turn on Face ID.'); }
-    } }, on ? 'Turn off Face ID' : 'Turn on Face ID'));
-}
-function lock() { bannerHidden = false; payHidden = false; curPass = null; db = null; cryptoKey = null; salt = null; undo = null; kbd = null; clearTimeout(idleT); render(); }
-let idleT;
-function bump() { clearTimeout(idleT); if (db) idleT = setTimeout(lock, 5 * 60 * 1000); }
-['click', 'keydown', 'touchstart'].forEach(ev => addEventListener(ev, bump));
+  : persisted === false ? 'Storage protection: off. This device may clear the app data when space runs low or the app is unused. Back up often. Using the app from the Home Screen icon usually fixes this.'
+  : 'Storage protection: checking this browser.';
 async function save() { try { await persist(); return true; } catch (e) { flash('Could not save: ' + e.message); return false; } }
 
 // ---------- categories & suggestions ----------
@@ -541,7 +633,7 @@ function goalStats() {
 
 // ---------- ui state ----------
 let tab = 'goal', undo = null, period = 'month', scope = 'all', draft = { scope: 'personal', type: 'income' }, addDate = null;
-let editGoal = false, lockErr = '', intro = false, kbd = null, busy = false, queueTotal = 0, toastT;
+let editGoal = false, kbd = null, busy = false, queueTotal = 0, toastT;
 function flash(m) {
   render();
   const t = $('#toast'); if (!t) return;
@@ -561,39 +653,46 @@ function countUp(el) {
 }
 
 // ---------- views ----------
-function lockView() {
-  const has = !!localStorage.getItem(KEY);
-  const p1 = h('input', { type: 'password', autocomplete: 'off', placeholder: has ? 'Passcode' : 'Choose a passcode (8+ characters)', 'aria-label': 'Passcode' });
-  const p2 = has ? null : h('input', { type: 'password', autocomplete: 'off', placeholder: 'Repeat passcode', 'aria-label': 'Repeat passcode' });
-  const err = h('div', { class: 'err' }, lockErr);
-  const btn = h('button', { class: 'btn primary', style: 'width:100%' }, has ? 'Unlock' : 'Create vault');
-  const go = async () => {
-    err.textContent = '';
+function startupView() {
+  const wrap = (...content) => h('div', { class: 'startup-wrap' }, h('div', { class: 'startup-card' },
+    h('div', { class: 'mark' }, icon('ruler', 26)), content));
+  if (startupError) return wrap(h('h1', {}, 'Goal Tracker'), h('p', { role: 'alert' }, startupError),
+    h('button', { class: 'btn primary', onclick: openApp }, 'Try again'),
+    h('button', { class: 'btn', onclick: () => openBackupDialog(true) }, 'Restore backup'));
+  if (!legacyVault) return wrap(h('h1', {}, 'Goal Tracker'), h('p', { role: 'status' }, 'Opening Goal Tracker…'));
+
+  const pass = h('input', { type: 'password', required: true, autocomplete: 'current-password', 'aria-label': 'Current passcode' });
+  const status = h('p', { class: 'err', role: 'status' });
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Continue');
+  const faceID = bioSupported() && bioRecord()
+    ? h('button', { class: 'btn', type: 'button', onclick: () => migrate(true) }, 'Use Face ID once') : null;
+  const restore = h('button', { class: 'btn', type: 'button', onclick: () => openBackupDialog(true) }, 'Restore backup');
+
+  async function migrate(useFaceID) {
+    if (submit.disabled) return;
+    submit.disabled = restore.disabled = true;
+    if (faceID) faceID.disabled = true;
+    status.textContent = 'Opening your saved data…';
     try {
-      if (has) { btn.disabled = true; err.textContent = 'Unlocking…'; await unlock(p1.value); }
-      else {
-        if (p1.value.length < 8) { err.textContent = 'Use at least 8 characters.'; return; }
-        if (p1.value !== p2.value) { err.textContent = 'Passcodes do not match.'; return; }
-        btn.disabled = true; err.textContent = 'Creating vault…'; await createVault(p1.value);
-      }
-      lockErr = ''; tab = 'goal'; intro = true; bump(); askPersist(); render();
-    } catch (e) { lockErr = has ? 'Wrong passcode. Try again.' : 'Could not create the vault: ' + e.message; render(); }
-  };
-  btn.addEventListener('click', go);
-  const bioBtn = (has && bioSupported() && bioRecord()) ? h('button', { class: 'btn', style: 'width:100%;margin-top:10px', onclick: async () => {
-    try { await bioUnlock(); lockErr = ''; tab = 'goal'; intro = true; bump(); askPersist(); render(); }
-    catch (e) { lockErr = 'Face ID did not work. Use your passcode.'; render(); } } }, 'Unlock with Face ID') : null;
-  const rf = has ? null : h('input', { type: 'file', accept: '.json', 'aria-label': 'Backup file', style: 'margin-top:8px' });
-  const restoreBox = has ? null : h('div', { class: 'panel', style: 'margin-top:18px;text-align:left' },
-    h('b', {}, 'Already have a backup?'), h('p', { class: 'mute small', style: 'margin:4px 0 8px' }, 'If this device cleared your data, pick your backup file here. Then unlock with your old passcode.'),
-    rf, h('button', { class: 'btn', style: 'width:100%;margin-top:10px', onclick: () => restoreFrom(rf.files[0], () => { flash('Backup restored. Enter your old passcode.'); render(); }) }, 'Restore backup'));
-  [p1, p2].forEach(i => i && i.addEventListener('keydown', e => { if (e.key === 'Enter') go(); }));
-  return h('div', { class: 'lockwrap' }, h('div', { class: 'lockcard' },
-    h('div', { class: 'mark' }, icon('ruler', 26)),
-    h('h1', {}, has ? 'Welcome back' : 'Goal Tracker'),
-    h('p', { class: 'mute', style: 'margin-bottom:22px' }, has ? 'Your data is encrypted on this device. Enter your passcode to open it.' : 'Your data is encrypted with this passcode and stored only on this device. There is no recovery: if you forget the passcode, the data is gone. If you already made a vault, open the app the same way as before: private tabs, other browsers and home-screen icons each keep their own data.'),
-    h('div', { class: 'field' }, p1), p2 && h('div', { class: 'field' }, p2), btn, bioBtn, err, restoreBox,
-    h('p', { class: 'mute small', style: 'margin-top:18px' }, 'This page cannot make network connections. Nothing leaves your device.')));
+      let data;
+      try { data = await openPasswordVault(legacyVault, useFaceID ? await legacyFaceIDPass() : pass.value); }
+      catch { throw new Error(useFaceID ? 'Face ID could not open your saved data. Try your current passcode.' : 'Could not open your saved data with that passcode.'); }
+      await replaceDeviceVault(data);
+      pass.value = '';
+      render();
+      askPersist();
+    } catch (e) {
+      status.textContent = e.message || 'Could not save the updated vault. Try again.';
+    } finally {
+      submit.disabled = restore.disabled = false;
+      if (faceID) faceID.disabled = false;
+    }
+  }
+
+  return wrap(h('h1', {}, 'Open your saved data'),
+    h('p', { class: 'mute' }, 'Enter your current passcode once to keep your existing data. After that, Goal Tracker opens directly on this browser.'),
+    h('form', { onsubmit: e => { e.preventDefault(); migrate(false); } },
+      field('Current passcode', pass), status, h('div', { class: 'btns' }, submit, faceID, restore)));
 }
 
 function goalForm(g) {
@@ -1301,7 +1400,7 @@ function shiftPreview(w, options, selectedDate) {
   const apply = h('button', { class: 'btn primary' }, 'Add shift to schedule');
   const cancel = h('button', { class: 'btn', onclick: () => dialog.close() }, 'Cancel');
   let saving = false;
-  const dialog = h('dialog', { class: 'panel shift-preview', 'aria-labelledby': title.id,
+  const dialog = h('dialog', { class: 'panel panel-modal shift-preview', 'aria-labelledby': title.id,
     oncancel: event => { if (saving) event.preventDefault(); } },
     title, field('Shift date', date), field('Workplace and shift', shift),
     h('div', { class: 'field' }, percentageLabel, percentage), results, error,
@@ -1731,28 +1830,17 @@ function taxPanel() {
 }
 
 function settingsView() {
-  const np = h('input', { type: 'password', placeholder: 'New passcode (8+ characters)', autocomplete: 'off' });
-  const bk = h('input', { type: 'file', accept: '.json' });
   const er = h('input', { placeholder: 'Type ERASE to confirm' });
   return h('div', {},
     h('div', { class: 'sec' }, h('h2', {}, 'Settings')),
     h('div', { class: 'panel' }, h('h2', {}, 'Privacy'),
-      h('p', { class: 'mute', style: 'margin-bottom:14px' }, 'Data is encrypted with AES-256-GCM using a key derived from your passcode, and stored only in this browser. The page is locked down so it cannot send data anywhere. It locks itself after 5 idle minutes.'),
-      h('button', { class: 'btn', onclick: lock }, 'Lock now')),
-    h('div', { class: 'panel' }, h('h2', {}, 'Change passcode'), h('div', { style: 'height:8px' }), np,
-      h('div', { style: 'margin-top:12px' }, h('button', {
-        class: 'btn', onclick: async () => {
-          if (np.value.length < 8) return flash('Use at least 8 characters.');
-          const hadBio = !!bioRecord(); salt = crypto.getRandomValues(new Uint8Array(16)); cryptoKey = await deriveKey(np.value, salt); curPass = np.value; localStorage.removeItem(BIO); await save(); flash(hadBio ? 'Passcode changed. Turn Face ID back on to use it again.' : 'Passcode changed.');
-        }
-      }, 'Change passcode'))),
-    bioPanel(),
+      h('p', { class: 'mute' }, 'Your data and its encryption key are stored in this browser. Goal Tracker opens directly for anyone who can use this browser profile.')),
     reminderPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Backup and export'),
       h('p', { class: 'mute small', style: 'margin-top:4px' }, backupStatus()),
       h('p', { class: persisted === false ? 'amber small' : 'mute small', style: 'margin-top:6px' }, persistText()),
       h('div', { class: 'btns', style: 'margin:10px 0 16px' },
-        h('button', { class: 'btn primary', onclick: backupNow }, 'Back up now'),
+        h('button', { class: 'btn primary', onclick: () => openBackupDialog() }, 'Back up now'),
         h('button', {
           class: 'btn', onclick: () => {
             if (!confirm('This CSV is not encrypted. Keep it somewhere safe. Continue?')) return;
@@ -1760,19 +1848,28 @@ function settingsView() {
             download('approved-transactions.csv', ['Date,Description,Amount,Category,Scope', ...approved().sort((x, y) => x.date < y.date ? -1 : 1).map(t => [t.date, q(t.desc), t.amount, q(t.category), t.scope].join(','))].join('\n'), 'text/csv');
           }
         }, 'Export approved as CSV')),
-      field('Restore from an encrypted backup (replaces what is here)', bk),
-      h('button', {
-        class: 'btn', onclick: () => {
-          if (!bk.files[0]) return flash('Choose a backup file first.');
-          if (!confirm('Replace the current vault with this backup?')) return;
-          restoreFrom(bk.files[0], render);
-        }
-      }, 'Restore backup')),
+      h('button', { class: 'btn', onclick: () => openBackupDialog(true) }, 'Restore backup')),
     taxPanel(),
     sacPanel(),
     h('div', { class: 'panel' }, h('h2', {}, 'Update the app'), h('p', { class: 'mute small', style: 'margin:4px 0 12px' }, 'Version: 24 Oct 2026. If this is not the latest, tap below to load the newest copy. Your data stays safe.'), h('button', { class: 'btn primary', onclick: () => location.replace(location.pathname + '?v=' + Date.now()) }, 'Get the latest version')),
     h('div', { class: 'panel' }, h('h2', {}, 'Erase everything'), h('p', { class: 'mute small', style: 'margin-bottom:12px' }, 'This deletes the vault from this browser. It cannot be undone unless you have a backup.'), er,
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: () => { if (er.value !== 'ERASE') return flash('Type ERASE first.'); localStorage.removeItem(KEY); localStorage.removeItem(BIO); localStorage.removeItem(BK); db = null; cryptoKey = null; render(); } }, 'Erase all data'))));
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn danger', onclick: async e => {
+        if (er.value !== 'ERASE') return flash('Type ERASE first.');
+        const button = e.currentTarget;
+        button.disabled = true;
+        try {
+          await replaceDeviceVault(emptyVault());
+          try { localStorage.removeItem(BK); } catch {}
+          undo = null;
+          tab = 'goal';
+          editGoal = false;
+          flash('Data erased.');
+        } catch (error) {
+          flash(error.message || 'Could not erase data.');
+        } finally {
+          button.disabled = false;
+        }
+      } }, 'Erase all data'))));
 }
 
 addEventListener('keydown', e => {
@@ -1784,7 +1881,7 @@ addEventListener('keydown', e => {
 
 function render() {
   const app = $('#app'); app.replaceChildren();
-  if (!db) { kbd = null; app.append(lockView()); return; }
+  if (!db) { kbd = null; app.append(startupView()); return; }
   const pend = db.tx.filter(t => t.status === 'pending').length;
   const tabs = [['goal', 'Goal', 'target'], ['add', 'Add', 'plus'], ['shifts', 'Shifts', 'cal'], ['settings', 'Settings', 'sliders']];
   const today = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -1792,14 +1889,13 @@ function render() {
   const age = backupAge();
   const banner = (false && needsBackup() && !bannerHidden) ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, 'Back up your data'), h('p', { class: 'mute small' }, age === null ? 'You have not made a backup yet. If this browser clears its storage, your history is gone.' : `Your last backup was ${age} days ago.`)),
-    h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: backupNow }, 'Back up now'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { bannerHidden = true; render(); } }, 'Later'))) : null;
+    h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: () => openBackupDialog() }, 'Back up now'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { bannerHidden = true; render(); } }, 'Later'))) : null;
   const missing = (!payHidden && tab !== 'add') ? incomeMissing() : null;
   const payBanner = missing ? h('div', { class: 'banner' },
     h('div', {}, h('b', {}, missing === iso(new Date()) ? 'Pay day today' : 'Pay day was ' + niceDate(missing)), h('p', { class: 'mute small' }, 'Your income for this fortnight has not been added yet.')),
     h('div', { class: 'btns' }, h('button', { class: 'btn primary', style: 'height:40px', onclick: () => { addDate = missing; tab = 'add'; window.scrollTo(0, 0); render(); } }, 'Add income'), h('button', { class: 'btn', style: 'height:40px', onclick: () => { payHidden = true; render(); } }, 'Later'))) : null;
   app.append(h('div', { class: 'wrap' },
-    h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today))),
-      h('button', { class: 'ghost', onclick: lock, 'aria-label': 'Lock the app' }, icon('lock', 16), 'Lock')),
+    h('div', { class: 'bar' }, h('div', { class: 'brand' }, h('div', { class: 'mark' }, icon('ruler', 20)), h('div', {}, h('b', {}, 'Goal Tracker'), h('span', {}, today)))),
     payBanner, banner, view));
   app.append(h('nav', { class: 'dock', 'aria-label': 'Main' }, tabs.map(([k, l, ic]) => h('button', { class: (tab === k || (k === 'goal' && tab === 'review')) ? 'on' : '', 'aria-current': tab === k ? 'page' : 'false', onclick: () => { if (tab !== k) { tab = k; editGoal = false; window.scrollTo(0, 0); render(); } } },
     icon(ic, 21), l, k === 'approve' && pend > 0 && h('span', { class: 'badge' }, pend)))));
@@ -1809,7 +1905,7 @@ function render() {
     document.querySelectorAll('.chips').forEach(c => { const on = c.querySelector('.chip.on'); if (on) c.scrollLeft = Math.max(0, on.getBoundingClientRect().left - c.getBoundingClientRect().left + c.scrollLeft - 22); });
   }));
 }
-render();
+openApp();
 </script>
 </body>
 </html>

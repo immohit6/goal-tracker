@@ -2,17 +2,22 @@
 
 A private savings goal tracker in a single HTML file. Set a goal, bring in your bank transactions, approve each one by hand, and see how much you need to save and how much you have spent.
 
-> **Disclaimer:** Goal Tracker records and calculates the figures you give it. It is not financial advice, and it is provided as is, without warranty. Check its numbers against your bank statements, and keep an encrypted backup. A forgotten passcode cannot be recovered.
+> **Disclaimer:** Goal Tracker records and calculates the figures you give it. It is not financial advice, and it is provided as is, without warranty. Check its numbers against your bank statements, and keep an encrypted backup and its password somewhere safe.
 
 ## Use it
 
 1. Open the live app at https://immohit6.github.io/goal-tracker/ or download `index.html` and save it somewhere permanent.
-2. Open it in Chrome, Safari or Firefox.
-3. Choose a passcode (8 or more characters). There is no recovery, so keep it safe.
+2. Open it in Chrome, Safari or Firefox. The app opens directly to Home.
+
+If you already have a Goal Tracker vault, use your existing passcode or Face ID, if configured, once to move your data to the new storage. Future visits in that browser open directly to Home.
 
 Your data stays in that browser on that device. A different browser, a private tab, a different home-screen icon or a different device starts empty unless you restore a backup. Pick one way to open the app and stick to it.
 
-**On iPhone:** open the app link in Safari, tap Share, then Add to Home Screen, and use that icon from then on. In Settings, turn on Face ID. The app reminds you to back up every 7 days (every 2 days if your device has not promised to keep the data; Settings shows which). Tap Back up now and save the file to iCloud Drive. If your data is ever cleared, the first screen has a Restore backup button.
+**On iPhone** you can open the app link in Safari, tap Share, then Add to Home Screen. Use that icon from then on. You can save your backup file to iCloud Drive.
+
+To make a portable backup, open Settings, tap **Back up now** and choose a backup password with at least eight characters. Tap **Prepare backup**, then **Save backup** to save the encrypted file. Keep its password somewhere safe so you can restore the file later.
+
+To recover your data, open Settings and choose **Restore backup**. Enter the password you chose for that file. If you made the backup before this update, use the app passcode you had when you made it.
 
 ## What it does
 
@@ -32,10 +37,9 @@ Keyboard shortcuts on the Approve screen: A approves, R rejects, S skips.
 
 ## Privacy
 
-- Data is encrypted with AES-256-GCM. The key comes from your passcode through PBKDF2 (310,000 iterations, SHA-256).
+- The app encrypts your data with AES-256-GCM. The browser keeps the device key in IndexedDB so it can open Goal Tracker automatically. Anyone with access to that browser profile can open the app.
 - The page has a Content Security Policy that blocks all network requests. It cannot send your data anywhere.
-- The app locks itself after 5 idle minutes.
-- Settings has an encrypted backup (with a 7-day reminder) and restore. The CSV export is not encrypted, so store it carefully.
+- Settings can save and restore password-protected backup files. Store CSV exports carefully because they contain your transactions in plain text.
 - Delete the bank CSV from your disk after importing it.
 
 ## Not built yet
