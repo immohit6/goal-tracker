@@ -802,7 +802,7 @@ function goalForm(g) {
           const startDay = st.value || iso(new Date());
           if (startDay > dl.value) return flash('The start date must be before the deadline.');
           const previous = db.goal;
-          db.goal = { name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: startDay };
+          db.goal = { ...previous, name: name.value.trim(), target: t, deadline: dl.value, startSaved: isNaN(s) ? 0 : s, start: startDay };
           if (!(await save())) { if (db) db.goal = previous; return; }
           if (!db) return;
           editGoal = false; flash('Goal saved.');
@@ -962,6 +962,43 @@ function savingsHistory(goal) {
     h('p', { class: 'mute small' }, 'Select a week to see the transactions behind it.'), chart, summary, entries);
 }
 
+function editActualSavings(goal, amount) {
+  const input = h('input', { id: 'actual-savings-amount', type: 'number', step: '0.01', required: true, value: amount.toFixed(2) });
+  const status = h('p', { class: 'coral small', role: 'alert' });
+  const submit = h('button', { class: 'btn primary', type: 'submit' }, 'Save amount');
+  const reset = h('button', { class: 'btn', type: 'button', onclick: () => update(null) }, 'Use calculated amount');
+  const cancel = h('button', { class: 'btn', type: 'button', onclick: () => dialog.close() }, 'Cancel');
+  async function update(value) {
+    const previous = goal.actualSavings;
+    status.textContent = '';
+    goal.actualSavings = value;
+    submit.disabled = reset.disabled = cancel.disabled = true;
+    if (!(await save())) {
+      goal.actualSavings = previous;
+      render();
+      status.textContent = 'Could not save the change. Try again.';
+      submit.disabled = reset.disabled = cancel.disabled = false;
+      return;
+    }
+    dialog.close();
+    flash(value === null ? 'Using calculated savings.' : 'Bank balance saved.');
+  }
+  const dialog = h('dialog', { class: 'panel panel-modal', 'aria-labelledby': 'actual-savings-title',
+    onclose: () => { dialog.remove(); $('#edit-actual-savings')?.focus(); },
+    oncancel: e => { if (submit.disabled) e.preventDefault(); } },
+    h('h2', { id: 'actual-savings-title' }, 'Edit actually saved'),
+    h('form', { onsubmit: e => {
+      e.preventDefault();
+      if (!submit.disabled && Number.isFinite(input.valueAsNumber)) update(input.valueAsNumber);
+    } },
+    h('p', { class: 'mute small' }, 'Enter your current bank balance. This amount stays fixed until you edit it or switch back to the calculated amount.'),
+    h('div', { class: 'field' }, h('label', { for: input.id }, 'Bank balance (AUD)'), input),
+    status, h('div', { class: 'btns' }, submit, Number.isFinite(goal.actualSavings) && reset, cancel)));
+  document.body.append(dialog);
+  dialog.showModal();
+  input.select();
+}
+
 function goalView() {
   const goal = db.goal;
   if (editGoal) return goalForm(goal);
@@ -975,7 +1012,9 @@ function goalView() {
   if (goal) {
     const stats = goalStats();
     const progress = Math.round(stats.pct);
-    const netProgress = Math.min(100, Math.max(0, stats.net / goal.target * 100));
+    const manualSavings = Number.isFinite(goal.actualSavings);
+    const actualSavings = manualSavings ? goal.actualSavings : stats.net;
+    const actualProgress = Math.min(100, Math.max(0, actualSavings / goal.target * 100));
     const pace = stats.done ? 'Goal reached.'
       : stats.overdue ? 'The deadline has passed. Update your goal to set a new date.'
       : `${money(stats.remaining)} to go · Save ${money(stats.perWeek)} per week`;
@@ -986,11 +1025,12 @@ function goalView() {
         h('div', { class: 'prog', role: 'progressbar', 'aria-label': 'Savings goal progress', 'aria-valuenow': progress },
           h('div', { style: `width:${stats.pct}%` }))),
       h('div', {},
-        h('div', { class: 'goal-progress' }, h('span', {}, 'Actually saved'), h('strong', {}, money(stats.net))),
+        h('div', { class: 'goal-progress' }, h('span', {}, 'Actually saved'), h('strong', {}, money(actualSavings))),
         h('div', { class: 'prog', role: 'progressbar', 'aria-label': 'Actually saved toward goal',
-          'aria-valuenow': Math.round(netProgress), 'aria-valuetext': `${money(stats.net)} of ${money(goal.target)}` },
-          h('div', { style: `width:${netProgress}%` })),
-        h('p', { class: 'mute small', style: 'margin-top:6px' }, 'Approved personal income minus expenses since the goal start date.')),
+          'aria-valuenow': Math.round(actualProgress), 'aria-valuetext': `${money(actualSavings)} of ${money(goal.target)}` },
+          h('div', { style: `width:${actualProgress}%` })),
+        h('p', { class: 'mute small', style: 'margin-top:6px' }, manualSavings ? 'Bank balance entered manually.' : 'Approved personal income minus expenses since the goal start date.'),
+        h('button', { id: 'edit-actual-savings', class: 'btn', style: 'margin-top:8px', onclick: () => editActualSavings(goal, actualSavings) }, 'Edit amount')),
       h('p', { class: 'goal-pace small' }, pace), actions);
   } else {
     goalCard = h('section', { class: 'panel goal-card' }, cardHeader('Savings goal'),
