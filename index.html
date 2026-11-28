@@ -710,7 +710,7 @@ function goalStats() {
   const elapsed = Math.min(Math.max(daysBetween(g.start, today), 0), Math.max(totalDays, 0));
   const expected = totalDays > 0 ? g.startSaved + (g.target - g.startSaved) * elapsed / totalDays : g.target;
   return {
-    saved, remaining, daysLeft, overdue, perDay, perWeek: perDay * 7, perMonth: perDay * 30.44, pace, enough: winDays >= 7, winDays, avgIncome, spentToday, budgetDay, safeToday: budgetDay - spentToday,
+    saved, net, remaining, daysLeft, overdue, perDay, perWeek: perDay * 7, perMonth: perDay * 30.44, pace, enough: winDays >= 7, winDays, avgIncome, spentToday, budgetDay, safeToday: budgetDay - spentToday,
     pct: Math.min(100, Math.max(0, saved / g.target * 100)), done: saved >= g.target,
     expected, expPct: Math.min(100, Math.max(0, expected / g.target * 100)), ahead: saved - expected
   };
@@ -975,6 +975,7 @@ function goalView() {
   if (goal) {
     const stats = goalStats();
     const progress = Math.round(stats.pct);
+    const netProgress = Math.min(100, Math.max(0, stats.net / goal.target * 100));
     const pace = stats.done ? 'Goal reached.'
       : stats.overdue ? 'The deadline has passed. Update your goal to set a new date.'
       : `${money(stats.remaining)} to go · Save ${money(stats.perWeek)} per week`;
@@ -984,6 +985,12 @@ function goalView() {
         h('div', { class: 'goal-progress' }, h('span', {}, `Due ${niceDate(goal.deadline)}`), h('strong', {}, `${progress}%`)),
         h('div', { class: 'prog', role: 'progressbar', 'aria-label': 'Savings goal progress', 'aria-valuenow': progress },
           h('div', { style: `width:${stats.pct}%` }))),
+      h('div', {},
+        h('div', { class: 'goal-progress' }, h('span', {}, 'Actually saved'), h('strong', {}, money(stats.net))),
+        h('div', { class: 'prog', role: 'progressbar', 'aria-label': 'Actually saved toward goal',
+          'aria-valuenow': Math.round(netProgress), 'aria-valuetext': `${money(stats.net)} of ${money(goal.target)}` },
+          h('div', { style: `width:${netProgress}%` })),
+        h('p', { class: 'mute small', style: 'margin-top:6px' }, 'Approved personal income minus expenses since the goal start date.')),
       h('p', { class: 'goal-pace small' }, pace), actions);
   } else {
     goalCard = h('section', { class: 'panel goal-card' }, cardHeader('Savings goal'),
